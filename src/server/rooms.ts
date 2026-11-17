@@ -250,7 +250,15 @@ export function attachRooms(io: IO) {
       }
       const n = cleanName(name);
       if (!n) return ack({ ok: false, error: "badName" });
-      if (r.players.some((p) => p.name.toLowerCase() === n.toLowerCase())) return ack({ ok: false, error: "nameTaken" });
+      const sameName = r.players.find((p) => p.name.toLowerCase() === n.toLowerCase());
+      if (sameName) {
+        // Someone whose tab closed (seat saved per tab) can take their offline seat back by name.
+        if (sameName.socketId) return ack({ ok: false, error: "nameTaken" });
+        bind(r, sameName);
+        ack({ ok: true, code: r.code, playerId: sameName.id });
+        maybeAdvancePick(r);
+        return broadcast(io, r);
+      }
       if (r.players.length >= MAX_ONLINE_PLAYERS) return ack({ ok: false, error: "roomFull" });
       const p: RPlayer = { id: randomUUID(), name: n, socketId: null, hand: [], score: 0, swapUsed: false, wins: [] };
       r.players.push(p);

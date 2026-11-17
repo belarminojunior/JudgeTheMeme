@@ -12,9 +12,12 @@ interface Session {
 
 const SESSION_KEY = "jtm-online";
 
-function loadSession(): Session | null {
+// The seat lives in sessionStorage: it survives a refresh or a phone going to sleep, but each tab
+// is its own player. (In localStorage every tab shared one seat, so opening an invite link in a
+// second tab silently took over the first tab's player and kicked it out.)
+function readSession(): Session | null {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(SESSION_KEY);
     return raw ? (JSON.parse(raw) as Session) : null;
   } catch {
     return null;
@@ -22,11 +25,23 @@ function loadSession(): Session | null {
 }
 function saveSession(s: Session | null) {
   try {
-    if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
-    else localStorage.removeItem(SESSION_KEY);
+    if (s) sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    else sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY); // drop the old shared seat from earlier versions
   } catch {
     /* ignore */
   }
+}
+
+/** The saved seat, unless the URL invites this tab to a different room (then the invite wins). */
+export function loadSession(): Session | null {
+  const s = readSession();
+  const invited = new URLSearchParams(window.location.search).get("room")?.toUpperCase().trim();
+  if (s && invited && invited !== s.code) {
+    saveSession(null);
+    return null;
+  }
+  return s;
 }
 
 export type OnlineErr = OnlineError | "offline";

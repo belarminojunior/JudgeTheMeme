@@ -6,6 +6,7 @@ import * as G from "@/lib/game";
 import { STRINGS, type Lang, type Strings } from "@/lib/i18n";
 import Setup from "./Setup";
 import OnlineEntry from "./online/OnlineEntry";
+import { loadSession } from "./online/useOnline";
 import { Button, CaptionCard, Logo, Meme, Scoreboard as SharedScoreboard, Screen } from "./ui";
 
 const STATE_KEY = "jtm-state-v1";
@@ -32,14 +33,13 @@ function save(key: string, value: unknown) {
 
 type View = "home" | "setup" | "game" | "online";
 
-const ONLINE_KEY = "jtm-online";
 const roomFromUrl = () => new URLSearchParams(window.location.search).get("room");
 
 export default function Game() {
   const [lang, setLang] = useState<Lang>(() => load<Lang>(LANG_KEY, "en"));
   const [game, setGame] = useState<G.GameState | null>(() => load<G.GameState | null>(STATE_KEY, null));
   // A QR/invite link (?room=CODE) or an online session in progress opens the online screen.
-  const [view, setView] = useState<View>(() => (roomFromUrl() || load(ONLINE_KEY, null) ? "online" : "home"));
+  const [view, setView] = useState<View>(() => (roomFromUrl() || loadSession() ? "online" : "home"));
   const t = STRINGS[lang];
 
   useEffect(() => save(LANG_KEY, lang), [lang]);
