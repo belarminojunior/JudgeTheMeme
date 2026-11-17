@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  --background: #14101f;
+  --foreground: #f6f2ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: #14101f;
+  --color-panel: #221a35;
+  --color-panel-2: #2e2448;
+  --color-pop: #ffd23f;
+  --color-hot: #ff4f79;
+  --color-mint: #3ee6a8;
+  --font-sans: var(--font-geist-sans);
+  --font-display: var(--font-anton);
+}
+
+body {
+  background:
+    radial-gradient(circle at 15% 0%, rgba(255, 79, 121, 0.18), transparent 40%),
+    radial-gradient(circle at 90% 100%, rgba(255, 210, 63, 0.12), transparent 45%),
+    var(--background);
+  background-attachment: fixed;
+  color: var(--foreground);
+}
+
+@keyframes flip-in {
+  from { transform: perspective(900px) rotateY(90deg); opacity: 0; }
+  to { transform: perspective(900px) rotateY(0); opacity: 1; }
+}
+@keyframes pop-in {
+  0% { transform: scale(0.85); opacity: 0; }
+  70% { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.animate-flip-in { animation: flip-in 0.45s ease-out both; }
+.animate-pop-in { animation: pop-in 0.35s ease-out both; }
