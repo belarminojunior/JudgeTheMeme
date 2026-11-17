@@ -1,0 +1,13 @@
+# Render blueprint: one long-running Node server (Next.js + Socket.IO rooms).
+# Rooms live in memory, so keep a single instance.
+services:
+  - type: web
+    name: judge-the-meme
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
