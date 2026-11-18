@@ -102,7 +102,7 @@ export function drawPhoto(s: PhotoDecks): string {
 /** How many face-down photos the judge chooses from each round. */
 export const PHOTO_CHOICES = 5;
 /** Seconds each player has to play a caption before they sit the round out. */
-export const PICK_SECONDS = 45;
+export const PICK_SECONDS = 60;
 
 /** Draw the face-down photos for a round (different from each other when the pool allows). */
 export function drawPhotoChoices(s: PhotoDecks): string[] {
@@ -235,6 +235,11 @@ export function pickWinner(state: GameState, playerId: string): GameState {
   s.winnerId = playerId;
   s.phase = winner.score >= s.target ? "gameover" : "result";
   return s;
+}
+
+/** The judge didn't like any caption: nobody scores this round. */
+export function noWinner(state: GameState): GameState {
+  return { ...state, winnerId: null, phase: "result" };
 }
 
 export function nextRound(state: GameState): GameState {

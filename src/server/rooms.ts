@@ -91,7 +91,8 @@ function view(r: Room, me: RPlayer): RoomView {
       submitted: r.submissions.some((s) => s.playerId === p.id),
     })),
     photo: r.phase === "lobby" || r.phase === "reveal" ? null : r.photo,
-    photoChoices: r.phase === "reveal" ? r.photoChoices.length : 0,
+    // Only the judge sees the faces of the photos; everyone else just sees how many there are.
+    photoChoices: r.phase === "reveal" ? r.photoChoices.map((p) => (me === judge(r) ? p : "")) : [],
     pickMsLeft: r.phase === "pick" && r.pickEndsAt ? Math.max(0, r.pickEndsAt - Date.now()) : null,
     hand: me.hand,
     swapUsed: me.swapUsed,
@@ -406,6 +407,15 @@ export function attachRooms(io: IO) {
       winner.wins.push({ photo: c.r.photo, caption: sub.caption });
       c.r.winnerId = winner.id;
       c.r.phase = winner.score >= c.r.target ? "gameover" : "result";
+      broadcast(io, c.r);
+    });
+
+    socket.on("game:noWinner", () => {
+      // The judge didn't like any caption: nobody scores, the cards are discarded as usual.
+      const c = ctx();
+      if (!c || c.r.phase !== "judging" || judge(c.r) !== c.me) return;
+      c.r.winnerId = null;
+      c.r.phase = "result";
       broadcast(io, c.r);
     });
 

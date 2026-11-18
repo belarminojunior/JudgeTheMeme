@@ -14,9 +14,12 @@ import {
   CountdownBadge,
   Logo,
   Meme,
+  NoneGoodButton,
+  NoWinner,
   PhotoChoices,
   Scoreboard as SharedScoreboard,
   Screen,
+  TimerBar,
   useCountdown,
 } from "./ui";
 
@@ -183,7 +186,7 @@ function Home({
           {STRINGS.en === t ? "Me pretending to understand the group project." : "Eu a fingir que percebo o trabalho de grupo."}
         </div>
         <div className="absolute right-2 top-0 w-44 rotate-6 overflow-hidden rounded-xl bg-white p-1.5 shadow-2xl">
-          <img src="https://picsum.photos/id/237/400/300" alt="" className="aspect-[4/3] w-full rounded-lg object-cover" />
+          <img src="/memes/distracted-boyfriend.jpg" alt="" className="aspect-[4/3] w-full rounded-lg object-cover" />
         </div>
         <div className="absolute bottom-0 left-16 w-44 rotate-3 rounded-xl bg-pop p-3 text-sm font-bold text-ink shadow-xl">
           {STRINGS.en === t ? "When the Wi-Fi drops for three seconds." : "Quando o Wi-Fi cai durante três segundos."}
@@ -257,8 +260,9 @@ function Play({
             <>
               <h2 className="text-center font-display text-3xl uppercase text-pop">{t.flipPhoto}</h2>
               <PhotoChoices
-                count={game.photoChoices?.length || 1}
+                photos={game.photoChoices?.length ? game.photoChoices : [game.photo]}
                 hint={t.flipPhotoHint(game.photoChoices?.length || 1)}
+                confirmLabel={`🔄 ${t.usePhoto}`}
                 onPick={(i) => setGame(G.flip(game, i))}
               />
             </>
@@ -303,21 +307,38 @@ function Play({
       );
 
     case "judging":
-      return <Judging t={t} game={game} caption={caption} onPick={(id) => setGame(G.pickWinner(game, id))} />;
+      return (
+        <Judging
+          t={t}
+          game={game}
+          caption={caption}
+          onPick={(id) => setGame(G.pickWinner(game, id))}
+          onNone={() => setGame(G.noWinner(game))}
+        />
+      );
 
     case "result": {
-      const winner = byId(game.winnerId)!;
-      const sub = game.submissions.find((s) => s.playerId === winner.id)!;
+      const winner = byId(game.winnerId);
+      const sub = winner && game.submissions.find((s) => s.playerId === winner.id);
       return (
         <Screen>
           {status}
-          <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
-            {t.winnerIs(winner.name)}
-          </h2>
-          <Meme photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
+          {winner && sub ? (
+            <>
+              <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
+                🎉 {t.winnerIs(winner.name)}
+              </h2>
+              <Meme photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
+            </>
+          ) : (
+            <>
+              <NoWinner title={t.noWinner} hint={t.noWinnerHint} />
+              <Meme photo={game.photo} />
+            </>
+          )}
           <ul className="flex flex-col gap-1.5 text-sm">
             {game.submissions
-              .filter((s) => s.playerId !== winner.id)
+              .filter((s) => s.playerId !== winner?.id)
               .map((s) => (
                 <li key={s.playerId} className="rounded-xl bg-panel px-3 py-2 text-white/70">
                   <b className="text-white">{byId(s.playerId)!.name}:</b> {caption(s.caption)}
@@ -390,6 +411,7 @@ function Pick({
         <h2 className="font-display text-3xl uppercase text-pop">{player.name}</h2>
         {left !== null && <CountdownBadge seconds={left} label={t.secondsLeft(left)} />}
       </div>
+      {left !== null && <TimerBar seconds={left} total={G.PICK_SECONDS} />}
       <p className="-mt-3 text-sm font-bold text-white/60">{t.chooseCaption}</p>
       <Meme photo={game.photo} caption={shown !== null ? caption(shown) : undefined} />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -418,11 +440,13 @@ function Judging({
   game,
   caption,
   onPick,
+  onNone,
 }: {
   t: Strings;
   game: G.GameState;
   caption: (i: number) => string;
   onPick: (playerId: string) => void;
+  onNone: () => void;
 }) {
   const [idx, setIdx] = useState(0);
   const sub = game.submissions[idx];
@@ -448,9 +472,13 @@ function Judging({
           →
         </Button>
       </div>
+      <p className="-mt-2 text-center text-sm font-bold text-white/50">
+        {idx + 1} / {game.submissions.length}
+      </p>
       <Button variant="hot" onClick={() => onPick(sub.playerId)}>
         🏆 {t.pickWinner}
       </Button>
+      <NoneGoodButton label={t.noneGood} confirmText={t.noneConfirm} onNone={onNone} />
     </Screen>
   );
 }

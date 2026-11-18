@@ -62,13 +62,21 @@ export function CaptionCard({
   return (
     <button
       onClick={onClick}
-      className={`flex min-h-24 w-full items-center rounded-2xl border-2 p-4 text-left text-base font-bold leading-snug transition ${
+      aria-pressed={selected}
+      className={`relative flex min-h-24 w-full items-center rounded-2xl border-2 p-4 pr-9 text-left text-base font-bold leading-snug transition active:scale-[0.98] ${
         selected
           ? "-translate-y-1 border-pop bg-pop text-ink shadow-[0_6px_0_#b8901a]"
-          : "border-white/10 bg-white text-ink hover:-translate-y-0.5"
+          : "border-white/10 bg-white text-ink shadow-[0_4px_0_#cfc6e3] hover:-translate-y-0.5"
       }`}
     >
       {text}
+      <span
+        className={`absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs ${
+          selected ? "bg-ink text-pop" : "border-2 border-ink/15"
+        }`}
+      >
+        {selected ? "✓" : ""}
+      </span>
     </button>
   );
 }
@@ -124,27 +132,82 @@ export function Scoreboard({
   );
 }
 
+/** The back of a card: what players see while the judge is choosing a photo. */
+export function CardBack({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`flex aspect-[3/4] items-center justify-center rounded-2xl border-2 border-pop/40 bg-[repeating-linear-gradient(45deg,#2e2448_0_10px,#261d3d_10px_20px)] shadow-lg ${className}`}
+    >
+      <span className="-rotate-6 rounded-lg bg-hot px-2 py-0.5 font-display text-xl uppercase text-white shadow">Meme</span>
+    </div>
+  );
+}
+
 /**
- * Face-down photo cards. The judge taps one to flip it; everyone else just sees the backs.
- * `onPick` is omitted for players who are only watching.
+ * The photos the judge chooses from at the start of a round. The judge sees their faces, taps one
+ * to preview it, then confirms. Without `onPick` (players who are only watching) only the card
+ * backs are shown.
  */
-export function PhotoChoices({ count, hint, onPick }: { count: number; hint: string; onPick?: (index: number) => void }) {
+export function PhotoChoices({
+  photos,
+  hint,
+  confirmLabel,
+  onPick,
+}: {
+  photos: string[];
+  hint: string;
+  confirmLabel?: string;
+  onPick?: (index: number) => void;
+}) {
+  const [selected, setSelected] = useState(0);
+  const faceUp = !!onPick && photos.every(Boolean);
+  if (!faceUp) {
+    return (
+      <div className="flex flex-col gap-3">
+        {hint && <p className="text-center text-sm font-semibold text-white/60">{hint}</p>}
+        <div className="grid grid-cols-5 gap-2">
+          {photos.map((_, i) => (
+            <CardBack key={i} className="animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  const pick = Math.min(selected, photos.length - 1);
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-center text-sm font-semibold text-white/60">{hint}</p>
-      <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-5">
-        {Array.from({ length: count }, (_, i) => (
+      {hint && <p className="text-center text-sm font-semibold text-white/60">{hint}</p>}
+      <Meme key={photos[pick]} photo={photos[pick]} className="animate-pop-in" />
+      <div className="grid grid-cols-5 gap-2">
+        {photos.map((p, i) => (
           <button
-            key={i}
-            disabled={!onPick}
-            onClick={() => onPick?.(i)}
+            key={p}
+            onClick={() => setSelected(i)}
             aria-label={`${i + 1}`}
-            className="flex aspect-[3/4] flex-col items-center justify-center rounded-2xl border-4 border-dashed border-pop/50 bg-panel font-display text-4xl text-pop transition enabled:hover:-translate-y-1 enabled:hover:border-pop enabled:active:scale-95 disabled:opacity-70"
+            aria-pressed={i === pick}
+            className={`overflow-hidden rounded-xl border-4 bg-white transition active:scale-95 ${
+              i === pick ? "-translate-y-1 border-pop shadow-[0_5px_0_#b8901a]" : "border-transparent opacity-70 hover:opacity-100"
+            }`}
           >
-            ?
+            <img src={p} alt="" className="aspect-square w-full object-cover" draggable={false} />
           </button>
         ))}
       </div>
+      <Button variant="hot" onClick={() => onPick(pick)}>
+        {confirmLabel}
+      </Button>
+    </div>
+  );
+}
+
+/** A thin bar that empties as the timer runs out. */
+export function TimerBar({ seconds, total }: { seconds: number; total: number }) {
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-panel-2">
+      <div
+        className={`h-full rounded-full transition-[width] duration-300 ease-linear ${seconds <= 10 ? "bg-hot" : "bg-pop"}`}
+        style={{ width: `${Math.max(0, Math.min(100, (seconds / total) * 100))}%` }}
+      />
     </div>
   );
 }
@@ -179,6 +242,29 @@ export function useCountdown(msLeft: number | null, resetKey: unknown, onExpire?
     };
   }, [msLeft, resetKey]);
   return msLeft === null ? null : left;
+}
+
+/** The judge's way out when every caption is bad: nobody scores this round. */
+export function NoneGoodButton({ label, confirmText, onNone }: { label: string; confirmText: string; onNone: () => void }) {
+  return (
+    <button
+      onClick={() => confirm(confirmText) && onNone()}
+      className="mx-auto rounded-full border-2 border-white/15 px-4 py-2 text-sm font-bold text-white/60 transition hover:border-hot hover:text-white"
+    >
+      🙅 {label}
+    </button>
+  );
+}
+
+/** Shown on the result screen when the judge decided no caption deserved the point. */
+export function NoWinner({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="animate-pop-in flex flex-col items-center gap-1 text-center">
+      <div className="text-6xl">🙅</div>
+      <h2 className="font-display text-4xl uppercase text-hot">{title}</h2>
+      <p className="text-sm font-semibold text-white/60">{hint}</p>
+    </div>
+  );
 }
 
 export function CountdownBadge({ seconds, label }: { seconds: number; label: string }) {

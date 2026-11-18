@@ -5,7 +5,20 @@ import type { Socket } from "socket.io-client";
 import { CAPTIONS } from "@/lib/captions";
 import type { Lang, Strings } from "@/lib/i18n";
 import type { ClientToServer, RoomView, ServerToClient } from "@/lib/online";
-import { Button, CaptionCard, CountdownBadge, Meme, PhotoChoices, Scoreboard, Screen, useCountdown } from "../ui";
+import { PICK_SECONDS } from "@/lib/game";
+import {
+  Button,
+  CaptionCard,
+  CountdownBadge,
+  Meme,
+  NoneGoodButton,
+  NoWinner,
+  PhotoChoices,
+  Scoreboard,
+  Screen,
+  TimerBar,
+  useCountdown,
+} from "../ui";
 
 type Sock = Socket<ServerToClient, ClientToServer>;
 
@@ -35,6 +48,7 @@ export default function OnlineGame({
   const submittedCount = needed.filter((p) => p.submitted).length;
   const secondsLeft = useCountdown(room.phase === "pick" ? room.pickMsLeft : null, room.round);
   const timer = secondsLeft !== null && <CountdownBadge seconds={secondsLeft} label={t.secondsLeft(secondsLeft)} />;
+  const timerBar = secondsLeft !== null && <TimerBar seconds={secondsLeft} total={PICK_SECONDS} />;
 
   const scoreboard = (
     <Scoreboard
@@ -75,16 +89,22 @@ export default function OnlineGame({
 
   switch (room.phase) {
     case "reveal": {
-      const count = room.photoChoices || 1;
+      const photos = room.photoChoices.length ? room.photoChoices : [""];
       body = isJudge ? (
         <>
           <h2 className="text-center font-display text-3xl uppercase text-pop">{t.flipPhoto}</h2>
-          <PhotoChoices count={count} hint={t.flipPhotoHint(count)} onPick={(index) => socket.emit("game:flip", { index })} />
+          <PhotoChoices
+            key={room.round}
+            photos={photos}
+            hint={t.flipPhotoHint(photos.length)}
+            confirmLabel={`🔄 ${t.usePhoto}`}
+            onPick={(index) => socket.emit("game:flip", { index })}
+          />
         </>
       ) : (
         <>
           <Waiting text={t.waitingJudgeFlip(name(room.judgeId))} small />
-          <PhotoChoices count={count} hint="" />
+          <PhotoChoices photos={photos} hint="" />
         </>
       );
       break;
@@ -100,6 +120,7 @@ export default function OnlineGame({
               <Progress t={t} done={submittedCount} total={needed.length} />
               {timer}
             </div>
+            {timerBar}
           </>
         );
       } else if (room.mySubmission !== null) {
@@ -111,10 +132,11 @@ export default function OnlineGame({
               <Progress t={t} done={submittedCount} total={needed.length} />
               {timer}
             </div>
+            {timerBar}
           </>
         );
       } else {
-        body = <PickHand key={room.round} t={t} room={room} cap={cap} socket={socket} timer={timer} />;
+        body = <PickHand key={room.round} t={t} room={room} cap={cap} socket={socket} timer={timer} timerBar={timerBar} />;
       }
       break;
 
@@ -153,10 +175,16 @@ export default function OnlineGame({
               </Button>
             )}
           </div>
+          <p className="-mt-2 text-center text-sm font-bold text-white/50">
+            {room.viewing + 1} / {n}
+          </p>
           {isJudge && (
-            <Button variant="hot" onClick={() => socket.emit("game:pick", { index: room.viewing })}>
-              🏆 {t.pickWinner}
-            </Button>
+            <>
+              <Button variant="hot" onClick={() => socket.emit("game:pick", { index: room.viewing })}>
+                🏆 {t.pickWinner}
+              </Button>
+              <NoneGoodButton label={t.noneGood} confirmText={t.noneConfirm} onNone={() => socket.emit("game:noWinner")} />
+            </>
           )}
         </>
       );
@@ -167,14 +195,22 @@ export default function OnlineGame({
       const win = room.submissions.find((s) => s.playerId === room.winnerId);
       body = (
         <>
-          <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
-            {room.winnerId === room.me ? "🎉 " : ""}
-            {t.winnerIs(name(room.winnerId))}
-          </h2>
-          {win && <Meme photo={room.photo!} caption={cap(win.caption)} className="animate-pop-in" />}
+          {win ? (
+            <>
+              <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
+                🎉 {t.winnerIs(name(room.winnerId))}
+              </h2>
+              <Meme photo={room.photo!} caption={cap(win.caption)} className="animate-pop-in" />
+            </>
+          ) : (
+            <>
+              <NoWinner title={t.noWinner} hint={t.noWinnerHint} />
+              <Meme photo={room.photo!} />
+            </>
+          )}
           <ul className="flex flex-col gap-1.5 text-sm">
             {room.submissions
-              .filter((s) => s.playerId !== room.winnerId)
+              .filter((s) => !win || s.playerId !== room.winnerId)
               .map((s) => (
                 <li key={s.playerId} className="rounded-xl bg-panel px-3 py-2 text-white/70">
                   <b className="text-white">{name(s.playerId)}:</b> {cap(s.caption)}
@@ -257,12 +293,14 @@ function PickHand({
   cap,
   socket,
   timer,
+  timerBar,
 }: {
   t: Strings;
   room: RoomView;
   cap: (i: number) => string;
   socket: Sock;
   timer: React.ReactNode;
+  timerBar: React.ReactNode;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const shown = selected !== null && room.hand.includes(selected) ? selected : null;
@@ -272,6 +310,7 @@ function PickHand({
         <p className="text-sm font-bold text-white/60">{t.chooseCaption}</p>
         {timer}
       </div>
+      {timerBar}
       <Meme photo={room.photo!} caption={shown !== null ? cap(shown) : undefined} className="animate-flip-in" />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {room.hand.map((c) => (
