@@ -30,6 +30,15 @@ const NO_FETCH = process.argv.includes("--no-fetch");
 const CONCURRENCY = 6;
 // Imgflip catalog pages to read (40 templates each). Override: npm run memes:fetch -- --pages=20
 const CATALOG_PAGES = Number(process.argv.find((a) => a.startsWith("--pages="))?.split("=")[1] ?? 12);
+// Other orderings of the same catalog reach templates the default list never shows:
+// npm run memes:fetch -- --sorts=top-all-time,top-30-days
+// "default" is the plain list. Give --sorts to read only the lists named.
+const CATALOG_SORTS = (process.argv.find((a) => a.startsWith("--sorts="))?.split("=")[1] ?? "default")
+  .split(",")
+  .filter(Boolean)
+  .map((s) => (s === "default" ? "" : s));
+// Pause between catalog pages, in ms (Imgflip answers 429 when read too fast): --delay=3000
+const PAGE_DELAY = Number(process.argv.find((a) => a.startsWith("--delay="))?.split("=")[1] ?? 1000);
 
 const slug = (s) =>
   s
@@ -73,14 +82,21 @@ const decode = (s) =>
  * Imgflip's public template catalog (imgflip.com/memetemplates, allowed by its robots.txt),
  * 40 templates per page, most popular first. Pages are read one per second to be polite.
  */
-async function listImgflipCatalog(pages) {
+async function listImgflipCatalog(pages, sort = "") {
   const out = [];
   for (let page = 1; page <= pages; page++) {
     try {
-      const res = await fetch(`https://imgflip.com/memetemplates?page=${page}`, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; judge-the-meme template fetcher)" },
-        signal: AbortSignal.timeout(20000),
-      });
+      const get = () =>
+        fetch(`https://imgflip.com/memetemplates?${sort ? `sort=${sort}&` : ""}page=${page}`, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; judge-the-meme template fetcher)" },
+          signal: AbortSignal.timeout(20000),
+        });
+      let res = await get();
+      // Too many requests: back off longer each time, up to three tries.
+      for (let wait = 30000; res.status === 429 && wait <= 90000; wait += 30000) {
+        await new Promise((r) => setTimeout(r, wait));
+        res = await get();
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
       const re = /<h3 class="mt-title">\s*<a title="[^"]*" href="\/meme\/\d+\/[^"]*">([^<]+)<\/a>[\s\S]*?src="\/\/i\.imgflip\.com\/4\/([0-9a-z]+)\.jpg"/g;
@@ -95,9 +111,9 @@ async function listImgflipCatalog(pages) {
     } catch (e) {
       console.warn(`imgflip catalog page ${page} failed:`, e.message);
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, PAGE_DELAY));
   }
-  console.log(`imgflip catalog: ${out.length} templates from ${pages} pages`);
+  console.log(`imgflip catalog${sort ? ` (${sort})` : ""}: ${out.length} templates from ${pages} pages`);
   return out;
 }
 
@@ -127,7 +143,7 @@ async function listTemplates() {
   } catch (e) {
     console.warn("imgflip failed:", e.message);
   }
-  out.push(...(await listImgflipCatalog(CATALOG_PAGES)));
+  for (const sort of CATALOG_SORTS) out.push(...(await listImgflipCatalog(CATALOG_PAGES, sort)));
   // Same meme from more than one source: keep one.
   const seen = new Set();
   return out.filter((t) => {
