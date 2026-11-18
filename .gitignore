@@ -42,3 +42,6 @@ next-env.d.ts
 
 # OCR language data cached by tesseract.js (scripts/fetch-memes.mjs)
 *.traineddata
+
+# Your own meme pictures waiting for review (scripts/import-memes.mjs)
+/memes-inbox/

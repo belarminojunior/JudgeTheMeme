@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "tsx server.ts --prod",
     "lint": "eslint",
-    "memes:fetch": "node scripts/fetch-memes.mjs"
+    "memes:fetch": "node scripts/fetch-memes.mjs",
+    "memes:import": "node scripts/import-memes.mjs"
   },
   "dependencies": {
     "next": "16.4.6",
