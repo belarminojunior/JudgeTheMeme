@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# OCR language data cached by tesseract.js (scripts/fetch-memes.mjs)
+*.traineddata
