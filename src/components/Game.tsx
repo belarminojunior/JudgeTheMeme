@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CAPTIONS } from "@/lib/captions";
 import * as G from "@/lib/game";
 import { STRINGS, type Lang, type Strings } from "@/lib/i18n";
+import Gallery from "./Gallery";
 import Setup from "./Setup";
 import OnlineEntry from "./online/OnlineEntry";
 import { loadSession } from "./online/useOnline";
@@ -31,7 +32,7 @@ function save(key: string, value: unknown) {
   }
 }
 
-type View = "home" | "setup" | "game" | "online";
+type View = "home" | "setup" | "game" | "online" | "gallery";
 
 const roomFromUrl = () => new URLSearchParams(window.location.search).get("room");
 
@@ -82,8 +83,11 @@ export default function Game() {
           onNew={() => setView("setup")}
           onOnline={() => setView("online")}
           onContinue={() => setView("game")}
+          onGallery={() => setView("gallery")}
         />
       )}
+
+      {view === "gallery" && <Gallery t={t} onBack={() => setView("home")} />}
 
       {view === "online" && (
         <OnlineEntry
@@ -148,12 +152,14 @@ function Home({
   onNew,
   onOnline,
   onContinue,
+  onGallery,
 }: {
   t: Strings;
   hasSaved: boolean;
   onNew: () => void;
   onOnline: () => void;
   onContinue: () => void;
+  onGallery: () => void;
 }) {
   return (
     <Screen>
@@ -183,6 +189,9 @@ function Home({
         <Button onClick={onOnline}>📱 {t.online}</Button>
         <Button variant="ghost" onClick={onNew}>
           🔁 {t.onePhone}
+        </Button>
+        <Button variant="ghost" onClick={onGallery}>
+          🖼️ {t.seeMemes}
         </Button>
       </div>
 

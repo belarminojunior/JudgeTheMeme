@@ -4,7 +4,7 @@ import { networkInterfaces } from "node:os";
 import next from "next";
 import { Server } from "socket.io";
 import type { ClientToServer, ServerToClient } from "./src/lib/online";
-import { getMemePool } from "./src/server/memes";
+import { getMemePool, MEME_CATALOG } from "./src/server/memes";
 import { attachRooms } from "./src/server/rooms";
 
 const port = parseInt(process.env.PORT || "3000", 10);
@@ -32,6 +32,7 @@ app.prepare().then(() => {
   const httpServer = createServer(async (req, res) => {
     const url = req.url ?? "/";
     if (url === "/api/memes") return json(res, await getMemePool());
+    if (url === "/api/memes/catalog") return json(res, MEME_CATALOG);
     if (url === "/api/lan") return json(res, { port, addresses: lanAddresses() });
     return handle(req, res);
   });

@@ -3,7 +3,16 @@
 import { STOCK_PHOTOS } from "../lib/photos";
 import library from "../lib/meme-library.json";
 
-const LOCAL = (library as { file: string }[]).map((m) => `/memes/${m.file}`);
+type Entry = { name: string; file: string; width: number; height: number };
+const LOCAL = (library as Entry[]).map((m) => `/memes/${m.file}`);
+
+/** Name, URL and size of every bundled meme, for the gallery screen. */
+export const MEME_CATALOG = (library as Entry[]).map((m) => ({
+  name: m.name,
+  url: `/memes/${m.file}`,
+  width: m.width,
+  height: m.height,
+}));
 
 export async function getMemePool(): Promise<string[]> {
   return LOCAL.length ? LOCAL : STOCK_PHOTOS;
