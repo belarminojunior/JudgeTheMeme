@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Socket } from "socket.io-client";
 import { CAPTIONS } from "@/lib/captions";
+import { isDeckCard, MIN_JUDGE_OPTIONS } from "@/lib/game";
 import type { Lang, Strings } from "@/lib/i18n";
 import type { ClientToServer, RoomView, ServerToClient } from "@/lib/online";
 import { Button, CaptionCard, Meme, Scoreboard, Screen } from "../ui";
@@ -25,7 +26,8 @@ export default function OnlineGame({
   onLeave: () => void;
 }) {
   const cap = (i: number) => CAPTIONS[i][lang];
-  const name = (id: string | null | undefined) => room.players.find((p) => p.id === id)?.name ?? "?";
+  const name = (id: string | null | undefined) =>
+    isDeckCard(id) ? t.deckName : (room.players.find((p) => p.id === id)?.name ?? "?");
   const me = room.players.find((p) => p.id === room.me)!;
   const isJudge = room.judgeId === room.me;
   const isHost = room.hostId === room.me;
@@ -111,11 +113,15 @@ export default function OnlineGame({
     case "judging": {
       const n = room.submissions.length;
       const sub = room.submissions[room.viewing] ?? room.submissions[0];
+      // Authorship is hidden while judging, so count how many cards the players actually played.
+      const played = room.players.filter((p) => p.submitted).length;
+      const fromDeck = n >= MIN_JUDGE_OPTIONS ? Math.max(0, n - played) : 0;
       body = (
         <>
           <p className="text-center font-bold text-white/70">
             {isJudge ? t.judging : t.judgeIsChoosing(name(room.judgeId))}
           </p>
+          {fromDeck > 0 && <p className="-mt-3 text-center text-sm text-white/50">{t.deckCardsAdded(fromDeck)}</p>}
           <Meme key={room.viewing} photo={room.photo!} caption={cap(sub.caption)} className="animate-pop-in" />
           <div className="flex items-center justify-between gap-3">
             {isJudge && (
@@ -156,7 +162,7 @@ export default function OnlineGame({
         <>
           <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
             {room.winnerId === room.me ? "🎉 " : ""}
-            {t.winnerIs(name(room.winnerId))}
+            {isDeckCard(room.winnerId) ? t.deckWins : t.winnerIs(name(room.winnerId))}
           </h2>
           {win && <Meme photo={room.photo!} caption={cap(win.caption)} className="animate-pop-in" />}
           <ul className="flex flex-col gap-1.5 text-sm">

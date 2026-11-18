@@ -295,21 +295,22 @@ function Play({
       return <Judging t={t} game={game} caption={caption} onPick={(id) => setGame(G.pickWinner(game, id))} />;
 
     case "result": {
-      const winner = byId(game.winnerId)!;
-      const sub = game.submissions.find((s) => s.playerId === winner.id)!;
+      const deckWon = G.isDeckCard(game.winnerId);
+      const sub = game.submissions.find((s) => s.playerId === game.winnerId)!;
+      const who = (id: string) => (G.isDeckCard(id) ? t.deckName : byId(id)!.name);
       return (
         <Screen>
           {status}
           <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
-            {t.winnerIs(winner.name)}
+            {deckWon ? t.deckWins : t.winnerIs(byId(game.winnerId)!.name)}
           </h2>
           <Meme photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
           <ul className="flex flex-col gap-1.5 text-sm">
             {game.submissions
-              .filter((s) => s.playerId !== winner.id)
+              .filter((s) => s.playerId !== game.winnerId)
               .map((s) => (
                 <li key={s.playerId} className="rounded-xl bg-panel px-3 py-2 text-white/70">
-                  <b className="text-white">{byId(s.playerId)!.name}:</b> {caption(s.caption)}
+                  <b className="text-white">{who(s.playerId)}:</b> {caption(s.caption)}
                 </li>
               ))}
           </ul>
@@ -411,9 +412,11 @@ function Judging({
 }) {
   const [idx, setIdx] = useState(0);
   const sub = game.submissions[idx];
+  const fromDeck = game.submissions.filter((s) => G.isDeckCard(s.playerId)).length;
   return (
     <Screen>
       <p className="text-center font-bold text-white/70">{t.judging}</p>
+      {fromDeck > 0 && <p className="-mt-3 text-center text-sm text-white/50">{t.deckCardsAdded(fromDeck)}</p>}
       <Meme key={idx} photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
       <div className="flex items-center justify-between gap-3">
         <Button variant="ghost" aria-label="previous" onClick={() => setIdx((i) => (i - 1 + game.submissions.length) % game.submissions.length)}>

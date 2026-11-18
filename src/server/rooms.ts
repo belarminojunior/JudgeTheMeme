@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import { drawCaptions, drawPhoto, newCaptionDeck, shuffle, type Win } from "../lib/game";
+import { drawCaptions, drawPhoto, isDeckCard, newCaptionDeck, shuffle, withDeckCards, type Win } from "../lib/game";
 import {
   MAX_ONLINE_PLAYERS,
   type ClientToServer,
@@ -114,9 +114,18 @@ function dealIn(r: Room, p: RPlayer) {
 function maybeAdvancePick(r: Room) {
   if (r.phase !== "pick" || pending(r).length > 0) return;
   if (r.submissions.length === 0) return; // nobody played (everyone left) — wait
-  r.submissions = shuffle(r.submissions);
+  r.submissions = shuffle(withDeckCards(r, r.submissions));
   r.viewing = 0;
   r.phase = "judging";
+}
+
+/** Round cancelled: played cards go back to their owners' hands, deck cards to the discard pile. */
+function returnPlayedCards(r: Room) {
+  for (const s of r.submissions) {
+    const owner = r.players.find((x) => x.id === s.playerId);
+    if (owner) owner.hand.push(s.caption);
+    else r.captionDiscard.push(s.caption);
+  }
 }
 
 function startRound(r: Room) {
@@ -170,9 +179,10 @@ function removePlayer(r: Room, playerId: string) {
     r.phase = "lobby";
     return;
   }
-  if (midRound && (wasJudge || (r.phase === "judging" && r.submissions.length === 0))) {
-    // The judge left mid-round: return played cards and restart the round with the next judge.
-    for (const s of r.submissions) r.players.find((x) => x.id === s.playerId)?.hand.push(s.caption);
+  const realPlays = r.submissions.filter((s) => !isDeckCard(s.playerId)).length;
+  if (midRound && (wasJudge || (r.phase === "judging" && realPlays === 0))) {
+    // The judge left mid-round (or nobody's card is left): return played cards and restart the round.
+    returnPlayedCards(r);
     if (wasJudge) {
       r.judgeIdx = (r.judgeIdx - 1 + r.players.length) % r.players.length;
       nextJudge(r);
@@ -349,6 +359,12 @@ export function attachRooms(io: IO) {
       const c = ctx();
       if (!c || c.r.phase !== "judging" || judge(c.r) !== c.me) return;
       const sub = c.r.submissions[index];
+      if (sub && isDeckCard(sub.playerId)) {
+        // A card from the deck won: nobody scores this round.
+        c.r.winnerId = sub.playerId;
+        c.r.phase = "result";
+        return broadcast(io, c.r);
+      }
       const winner = sub && c.r.players.find((p) => p.id === sub.playerId);
       if (!winner) return;
       winner.score += 1;
@@ -372,7 +388,7 @@ export function attachRooms(io: IO) {
       if (!c || c.r.hostId !== c.me.id) return;
       const { r } = c;
       if (r.phase !== "reveal" && r.phase !== "pick" && r.phase !== "judging") return;
-      for (const s of r.submissions) r.players.find((x) => x.id === s.playerId)?.hand.push(s.caption);
+      returnPlayedCards(r);
       nextJudge(r);
       startRound(r);
       broadcast(io, r);

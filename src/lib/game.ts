@@ -88,6 +88,21 @@ export function drawCaptions(s: CaptionDecks, n: number): number[] {
   return out;
 }
 
+/** The judge always gets at least this many captions to choose from. */
+export const MIN_JUDGE_OPTIONS = 5;
+const DECK_PREFIX = "deck-";
+/** Submissions added from the deck (not played by anyone) have ids like "deck-0". */
+export const isDeckCard = (playerId: string | null | undefined) => !!playerId?.startsWith(DECK_PREFIX);
+
+/**
+ * When fewer than MIN_JUDGE_OPTIONS captions were played, add random ones from the deck
+ * so the judge still has a real choice. If the judge picks one of those, nobody scores.
+ */
+export function withDeckCards(s: CaptionDecks, subs: Submission[]): Submission[] {
+  const extra = drawCaptions(s, Math.max(0, MIN_JUDGE_OPTIONS - subs.length));
+  return [...subs, ...extra.map((caption, i) => ({ playerId: `${DECK_PREFIX}${i}`, caption }))];
+}
+
 export function drawPhoto(s: PhotoDecks): string {
   if (s.photoDeck.length === 0) {
     // Reshuffle, avoiding an immediate repeat of the current photo when possible.
@@ -169,7 +184,7 @@ export function playCard(state: GameState, playerId: string, caption: number): G
   s.submissions.push({ playerId, caption });
   s.queue = s.queue.filter((id) => id !== playerId);
   if (s.queue.length === 0) {
-    s.submissions = shuffle(s.submissions);
+    s.submissions = shuffle(withDeckCards(s, s.submissions));
     s.phase = "judgeHandoff";
   } else {
     s.phase = "handoff";
@@ -183,11 +198,16 @@ export function showCaptionsToJudge(state: GameState): GameState {
 
 export function pickWinner(state: GameState, playerId: string): GameState {
   const s = clone(state);
+  s.winnerId = playerId;
+  if (isDeckCard(playerId)) {
+    // A card from the deck won: nobody scores this round.
+    s.phase = "result";
+    return s;
+  }
   const winner = s.players.find((x) => x.id === playerId)!;
   const sub = s.submissions.find((x) => x.playerId === playerId)!;
   winner.score += 1;
   winner.wins.push({ photo: s.photo, caption: sub.caption });
-  s.winnerId = playerId;
   s.phase = winner.score >= s.target ? "gameover" : "result";
   return s;
 }
