@@ -45,13 +45,28 @@ function save(key: string, value: unknown) {
   }
 }
 
-type View = "home" | "setup" | "game" | "online" | "gallery";
+/** A saved game, with meme URLs from before the switch to WebP (.jpg/.png) pointed at the new files. */
+function loadGame(): G.GameState | null {
+  const g = load<G.GameState | null>(STATE_KEY, null);
+  if (!g) return null;
+  const fix = (u: string) => (u.startsWith("/memes/") ? u.replace(/\.(jpe?g|png)$/, ".webp") : u);
+  return {
+    ...g,
+    photo: fix(g.photo),
+    photoPool: g.photoPool.map(fix),
+    photoDeck: g.photoDeck.map(fix),
+    photoChoices: (g.photoChoices ?? []).map(fix),
+    players: g.players.map((p) => ({ ...p, wins: p.wins.map((w) => ({ ...w, photo: fix(w.photo) })) })),
+  };
+}
+
+type View ="home" | "setup" | "game" | "online" | "gallery";
 
 const roomFromUrl = () => new URLSearchParams(window.location.search).get("room");
 
 export default function Game() {
   const [lang, setLang] = useState<Lang>(() => load<Lang>(LANG_KEY, "en"));
-  const [game, setGame] = useState<G.GameState | null>(() => load<G.GameState | null>(STATE_KEY, null));
+  const [game, setGame] = useState<G.GameState | null>(() => loadGame());
   // A QR/invite link (?room=CODE) or an online session in progress opens the online screen.
   const [view, setView] = useState<View>(() => (roomFromUrl() || loadSession() ? "online" : "home"));
   const t = STRINGS[lang];
@@ -186,7 +201,7 @@ function Home({
           {STRINGS.en === t ? "Me pretending to understand the group project." : "Eu a fingir que percebo o trabalho de grupo."}
         </div>
         <div className="absolute right-2 top-0 w-44 rotate-6 overflow-hidden rounded-xl bg-white p-1.5 shadow-2xl">
-          <img src="/memes/distracted-boyfriend.jpg" alt="" className="aspect-[4/3] w-full rounded-lg object-cover" />
+          <img src="/memes/thumbs/distracted-boyfriend.webp" alt="" className="aspect-[4/3] w-full rounded-lg object-cover" />
         </div>
         <div className="absolute bottom-0 left-16 w-44 rotate-3 rounded-xl bg-pop p-3 text-sm font-bold text-ink shadow-xl">
           {STRINGS.en === t ? "When the Wi-Fi drops for three seconds." : "Quando o Wi-Fi cai durante três segundos."}

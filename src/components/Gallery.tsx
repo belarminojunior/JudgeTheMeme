@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Strings } from "@/lib/i18n";
-import { Button, Screen } from "./ui";
+import { Button, Screen, thumbOf } from "./ui";
 
 interface MemeInfo {
   name: string;
@@ -66,7 +66,7 @@ export default function Gallery({ t, onBack }: { t: Strings; onBack: () => void 
               className="group flex w-full flex-col overflow-hidden rounded-xl bg-white text-left text-ink shadow-lg transition active:scale-95"
             >
               <img
-                src={m.url}
+                src={thumbOf(m.url)}
                 alt={m.name}
                 width={m.width}
                 height={m.height}

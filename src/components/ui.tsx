@@ -37,6 +37,8 @@ export function Meme({
       <img
         src={photo}
         alt=""
+        decoding="async"
+        fetchPriority="high"
         referrerPolicy="no-referrer"
         className="mx-auto max-h-[55vh] min-h-40 w-full rounded-xl bg-neutral-100 object-contain"
         draggable={false}
@@ -132,6 +134,24 @@ export function Scoreboard({
   );
 }
 
+/** Small version of a bundled meme (public/memes/thumbs/); uploaded photos have none and are used as-is. */
+export function thumbOf(url: string): string {
+  return url.startsWith("/memes/") && !url.startsWith("/memes/thumbs/") ? url.replace("/memes/", "/memes/thumbs/") : url;
+}
+
+/** Start downloading images before they are shown, so they appear instantly. */
+export function usePreload(urls: string[]) {
+  const key = urls.join("|");
+  useEffect(() => {
+    for (const u of key.split("|")) {
+      if (!u) continue;
+      const img = new Image();
+      img.decoding = "async";
+      img.src = u;
+    }
+  }, [key]);
+}
+
 /** The back of a card: what players see while the judge is choosing a photo. */
 export function CardBack({ className = "" }: { className?: string }) {
   return (
@@ -161,6 +181,7 @@ export function PhotoChoices({
 }) {
   const [selected, setSelected] = useState(0);
   const faceUp = !!onPick && photos.every(Boolean);
+  usePreload(faceUp ? photos : []);
   if (!faceUp) {
     return (
       <div className="flex flex-col gap-3">
@@ -189,7 +210,7 @@ export function PhotoChoices({
               i === pick ? "-translate-y-1 border-pop shadow-[0_5px_0_#b8901a]" : "border-transparent opacity-70 hover:opacity-100"
             }`}
           >
-            <img src={p} alt="" className="aspect-square w-full object-cover" draggable={false} />
+            <img src={thumbOf(p)} alt="" decoding="async" className="aspect-square w-full object-cover" draggable={false} />
           </button>
         ))}
       </div>

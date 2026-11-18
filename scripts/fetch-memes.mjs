@@ -20,7 +20,13 @@ const DUPLICATE_DISTANCE = 6; // max differing bits (of 64) for two images to co
 const MAX_RATIO = 1.6; // skip very tall multi-panel templates: unreadable on a phone card
 const MIN_SIDE = 200; // skip tiny images
 const MAX_BYTES = 1_500_000; // skip huge downloads
-const MAX_WIDTH = 900; // stored images are resized to this width at most
+const MAX_WIDTH = 720; // stored images are resized to this width at most (sharp on a phone, small download)
+const WEBP_QUALITY = 74;
+const THUMB_DIR = path.join(OUT_DIR, "thumbs");
+const THUMB_WIDTH = 240;
+const THUMB_QUALITY = 60;
+// Skip downloading and only re-process what is on disk: npm run memes:fetch -- --no-fetch
+const NO_FETCH = process.argv.includes("--no-fetch");
 const CONCURRENCY = 6;
 // Imgflip catalog pages to read (40 templates each). Override: npm run memes:fetch -- --pages=20
 const CATALOG_PAGES = Number(process.argv.find((a) => a.startsWith("--pages="))?.split("=")[1] ?? 12);
@@ -132,28 +138,41 @@ async function listTemplates() {
   });
 }
 
-/** Shrink every image to a phone-friendly JPEG (≤ MAX_WIDTH px wide). Already-small JPEGs are left alone. */
+/**
+ * Turn every image into a small WebP (≤ MAX_WIDTH px wide) plus a THUMB_WIDTH px thumbnail in
+ * public/memes/thumbs/ (same file name), used by the gallery and the judge's photo picker.
+ * Images that already have both are left alone.
+ */
 async function optimize(library) {
   const { default: sharp } = await import("sharp");
   sharp.cache(false);
+  await mkdir(THUMB_DIR, { recursive: true });
   let changed = 0;
   for (const m of library) {
-    if (m.file.endsWith(".jpg") && m.width <= MAX_WIDTH) continue;
+    const file = m.file.replace(/\.(png|jpe?g|webp)$/, ".webp");
+    if (m.file === file && existsSync(path.join(THUMB_DIR, file))) continue;
     const src = path.join(OUT_DIR, m.file);
-    const file = m.file.replace(/\.(png|jpe?g)$/, ".jpg");
     // Read into memory first: on Windows sharp keeps a path it opened locked, so writing back fails.
-    const { data, info } = await sharp(await readFile(src))
-      .flatten({ background: "#ffffff" }) // PNG transparency → white card background
+    const input = await sharp(await readFile(src)).flatten({ background: "#ffffff" }).toBuffer(); // transparency → white card
+    const { data, info } = await sharp(input)
       .resize({ width: MAX_WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: 82, mozjpeg: true })
+      .webp({ quality: WEBP_QUALITY, effort: 5 })
       .toBuffer({ resolveWithObject: true });
-    if (file !== m.file && existsSync(path.join(OUT_DIR, file))) continue; // name clash: keep the original
+    const thumb = await sharp(input)
+      .resize({ width: THUMB_WIDTH, withoutEnlargement: true })
+      .webp({ quality: THUMB_QUALITY, effort: 5 })
+      .toBuffer();
     await writeFile(path.join(OUT_DIR, file), data);
+    await writeFile(path.join(THUMB_DIR, file), thumb);
     if (file !== m.file) await unlink(src);
     Object.assign(m, { file, width: info.width, height: info.height });
     changed++;
   }
   if (changed) console.log(`optimized ${changed} images`);
+}
+
+async function removeImage(file) {
+  for (const f of [path.join(OUT_DIR, file), path.join(THUMB_DIR, file)]) if (existsSync(f)) await unlink(f);
 }
 
 /** 64-bit difference hash: near-identical pictures get near-identical hashes. */
@@ -192,13 +211,13 @@ async function clean(library, blocklist) {
     const twin = kept.find((k) => k.hash && hamming(k.hash, hash) <= DUPLICATE_DISTANCE);
     let reason = twin ? `duplicate of "${twin.name}"` : null;
     if (!reason) {
-      const { data } = await ocr.recognize(await readFile(file));
+      const { data } = await ocr.recognize(await sharp(await readFile(file)).png().toBuffer()); // OCR can't read WebP
       const words = data.words.filter((w) => w.confidence > 75 && /^[A-Za-z]{3,}[!?.,']*$/.test(w.text));
       if (words.length >= 2) reason = `has text: ${words.slice(0, 6).map((w) => w.text).join(" ")}`;
     }
     if (reason) {
       blocklist[m.name] = reason;
-      await unlink(file);
+      await removeImage(m.file);
       if (reason.startsWith("duplicate")) dupes++;
       else texty++;
       continue;
@@ -217,11 +236,11 @@ async function main() {
   const blocked = new Set(Object.keys(blocklist).map(key));
   const onDisk = new Set(await readdir(OUT_DIR));
 
-  const templates = (await listTemplates()).filter((t) => !blocked.has(key(t.name)));
+  const templates = NO_FETCH ? [] : (await listTemplates()).filter((t) => !blocked.has(key(t.name)));
   // Names added to the blocklist by hand are removed from the library on the next run.
   for (const m of previous) {
     if (blocked.has(key(m.name)) && onDisk.has(m.file)) {
-      await unlink(path.join(OUT_DIR, m.file));
+      await removeImage(m.file);
       onDisk.delete(m.file);
     }
   }
