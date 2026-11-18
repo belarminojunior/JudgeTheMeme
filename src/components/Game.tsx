@@ -8,7 +8,17 @@ import Gallery from "./Gallery";
 import Setup from "./Setup";
 import OnlineEntry from "./online/OnlineEntry";
 import { loadSession } from "./online/useOnline";
-import { Button, CaptionCard, Logo, Meme, Scoreboard as SharedScoreboard, Screen } from "./ui";
+import {
+  Button,
+  CaptionCard,
+  CountdownBadge,
+  Logo,
+  Meme,
+  PhotoChoices,
+  Scoreboard as SharedScoreboard,
+  Screen,
+  useCountdown,
+} from "./ui";
 
 const STATE_KEY = "jtm-state-v1";
 const LANG_KEY = "jtm-lang";
@@ -244,14 +254,14 @@ function Play({
               <Button onClick={() => setGame(G.startCaptioning(game))}>{t.readyToCaption}</Button>
             </>
           ) : (
-            <button
-              onClick={() => setGame(G.flip(game))}
-              className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-3 rounded-2xl border-4 border-dashed border-pop/50 bg-panel text-center transition hover:border-pop"
-            >
-              <span className="font-display text-5xl uppercase text-pop">?</span>
-              <span className="font-bold">{t.flipPhoto}</span>
-              <span className="text-sm text-white/50">{t.judgeTurn(judge.name)}</span>
-            </button>
+            <>
+              <h2 className="text-center font-display text-3xl uppercase text-pop">{t.flipPhoto}</h2>
+              <PhotoChoices
+                count={game.photoChoices?.length || 1}
+                hint={t.flipPhotoHint(game.photoChoices?.length || 1)}
+                onPick={(i) => setGame(G.flip(game, i))}
+              />
+            </>
           )}
           <Scoreboard t={t} game={game} />
         </Screen>
@@ -278,6 +288,7 @@ function Play({
           caption={caption}
           onSwap={() => setGame(G.swapHand(game, current!.id))}
           onPlay={(c) => setGame(G.playCard(game, current!.id, c))}
+          onTimeout={() => setGame(G.skipPlayer(game, current!.id))}
         />
       );
 
@@ -295,22 +306,21 @@ function Play({
       return <Judging t={t} game={game} caption={caption} onPick={(id) => setGame(G.pickWinner(game, id))} />;
 
     case "result": {
-      const deckWon = G.isDeckCard(game.winnerId);
-      const sub = game.submissions.find((s) => s.playerId === game.winnerId)!;
-      const who = (id: string) => (G.isDeckCard(id) ? t.deckName : byId(id)!.name);
+      const winner = byId(game.winnerId)!;
+      const sub = game.submissions.find((s) => s.playerId === winner.id)!;
       return (
         <Screen>
           {status}
           <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
-            {deckWon ? t.deckWins : t.winnerIs(byId(game.winnerId)!.name)}
+            {t.winnerIs(winner.name)}
           </h2>
           <Meme photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
           <ul className="flex flex-col gap-1.5 text-sm">
             {game.submissions
-              .filter((s) => s.playerId !== game.winnerId)
+              .filter((s) => s.playerId !== winner.id)
               .map((s) => (
                 <li key={s.playerId} className="rounded-xl bg-panel px-3 py-2 text-white/70">
-                  <b className="text-white">{who(s.playerId)}:</b> {caption(s.caption)}
+                  <b className="text-white">{byId(s.playerId)!.name}:</b> {caption(s.caption)}
                 </li>
               ))}
           </ul>
@@ -360,6 +370,7 @@ function Pick({
   caption,
   onSwap,
   onPlay,
+  onTimeout,
 }: {
   t: Strings;
   game: G.GameState;
@@ -367,16 +378,19 @@ function Pick({
   caption: (i: number) => string;
   onSwap: () => void;
   onPlay: (c: number) => void;
+  onTimeout: () => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const shown = selected !== null && player.hand.includes(selected) ? selected : null;
+  const left = useCountdown(G.PICK_SECONDS * 1000, player.id, onTimeout);
 
   return (
     <Screen>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="font-display text-3xl uppercase text-pop">{player.name}</h2>
-        <span className="text-sm font-bold text-white/60">{t.chooseCaption}</span>
+        {left !== null && <CountdownBadge seconds={left} label={t.secondsLeft(left)} />}
       </div>
+      <p className="-mt-3 text-sm font-bold text-white/60">{t.chooseCaption}</p>
       <Meme photo={game.photo} caption={shown !== null ? caption(shown) : undefined} />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {player.hand.map((c) => (
@@ -412,11 +426,9 @@ function Judging({
 }) {
   const [idx, setIdx] = useState(0);
   const sub = game.submissions[idx];
-  const fromDeck = game.submissions.filter((s) => G.isDeckCard(s.playerId)).length;
   return (
     <Screen>
       <p className="text-center font-bold text-white/70">{t.judging}</p>
-      {fromDeck > 0 && <p className="-mt-3 text-center text-sm text-white/50">{t.deckCardsAdded(fromDeck)}</p>}
       <Meme key={idx} photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
       <div className="flex items-center justify-between gap-3">
         <Button variant="ghost" aria-label="previous" onClick={() => setIdx((i) => (i - 1 + game.submissions.length) % game.submissions.length)}>

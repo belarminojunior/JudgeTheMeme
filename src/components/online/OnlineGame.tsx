@@ -3,10 +3,9 @@
 import { useState } from "react";
 import type { Socket } from "socket.io-client";
 import { CAPTIONS } from "@/lib/captions";
-import { isDeckCard, MIN_JUDGE_OPTIONS } from "@/lib/game";
 import type { Lang, Strings } from "@/lib/i18n";
 import type { ClientToServer, RoomView, ServerToClient } from "@/lib/online";
-import { Button, CaptionCard, Meme, Scoreboard, Screen } from "../ui";
+import { Button, CaptionCard, CountdownBadge, Meme, PhotoChoices, Scoreboard, Screen, useCountdown } from "../ui";
 
 type Sock = Socket<ServerToClient, ClientToServer>;
 
@@ -26,8 +25,7 @@ export default function OnlineGame({
   onLeave: () => void;
 }) {
   const cap = (i: number) => CAPTIONS[i][lang];
-  const name = (id: string | null | undefined) =>
-    isDeckCard(id) ? t.deckName : (room.players.find((p) => p.id === id)?.name ?? "?");
+  const name = (id: string | null | undefined) => room.players.find((p) => p.id === id)?.name ?? "?";
   const me = room.players.find((p) => p.id === room.me)!;
   const isJudge = room.judgeId === room.me;
   const isHost = room.hostId === room.me;
@@ -35,6 +33,8 @@ export default function OnlineGame({
   const judgeAway = !!judge && !judge.connected;
   const needed = room.players.filter((p) => p.id !== room.judgeId && p.connected);
   const submittedCount = needed.filter((p) => p.submitted).length;
+  const secondsLeft = useCountdown(room.phase === "pick" ? room.pickMsLeft : null, room.round);
+  const timer = secondsLeft !== null && <CountdownBadge seconds={secondsLeft} label={t.secondsLeft(secondsLeft)} />;
 
   const scoreboard = (
     <Scoreboard
@@ -74,19 +74,21 @@ export default function OnlineGame({
   let body: React.ReactNode = null;
 
   switch (room.phase) {
-    case "reveal":
+    case "reveal": {
+      const count = room.photoChoices || 1;
       body = isJudge ? (
-        <button
-          onClick={() => socket.emit("game:flip")}
-          className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-3 rounded-2xl border-4 border-dashed border-pop/50 bg-panel text-center transition hover:border-pop"
-        >
-          <span className="font-display text-5xl uppercase text-pop">?</span>
-          <span className="font-bold">{t.flipPhoto}</span>
-        </button>
+        <>
+          <h2 className="text-center font-display text-3xl uppercase text-pop">{t.flipPhoto}</h2>
+          <PhotoChoices count={count} hint={t.flipPhotoHint(count)} onPick={(index) => socket.emit("game:flip", { index })} />
+        </>
       ) : (
-        <Waiting text={t.waitingJudgeFlip(name(room.judgeId))} />
+        <>
+          <Waiting text={t.waitingJudgeFlip(name(room.judgeId))} small />
+          <PhotoChoices count={count} hint="" />
+        </>
       );
       break;
+    }
 
     case "pick":
       if (isJudge) {
@@ -94,7 +96,10 @@ export default function OnlineGame({
           <>
             <Meme photo={room.photo!} className="animate-flip-in" />
             <Waiting text={t.judgeWaiting} small />
-            <Progress t={t} done={submittedCount} total={needed.length} />
+            <div className="flex items-center justify-center gap-2">
+              <Progress t={t} done={submittedCount} total={needed.length} />
+              {timer}
+            </div>
           </>
         );
       } else if (room.mySubmission !== null) {
@@ -102,26 +107,28 @@ export default function OnlineGame({
           <>
             <Meme photo={room.photo!} caption={cap(room.mySubmission)} />
             <Waiting text={t.captionPlayed} small />
-            <Progress t={t} done={submittedCount} total={needed.length} />
+            <div className="flex items-center justify-center gap-2">
+              <Progress t={t} done={submittedCount} total={needed.length} />
+              {timer}
+            </div>
           </>
         );
       } else {
-        body = <PickHand key={room.round} t={t} room={room} cap={cap} socket={socket} />;
+        body = <PickHand key={room.round} t={t} room={room} cap={cap} socket={socket} timer={timer} />;
       }
       break;
 
     case "judging": {
       const n = room.submissions.length;
       const sub = room.submissions[room.viewing] ?? room.submissions[0];
-      // Authorship is hidden while judging, so count how many cards the players actually played.
-      const played = room.players.filter((p) => p.submitted).length;
-      const fromDeck = n >= MIN_JUDGE_OPTIONS ? Math.max(0, n - played) : 0;
       body = (
         <>
           <p className="text-center font-bold text-white/70">
             {isJudge ? t.judging : t.judgeIsChoosing(name(room.judgeId))}
           </p>
-          {fromDeck > 0 && <p className="-mt-3 text-center text-sm text-white/50">{t.deckCardsAdded(fromDeck)}</p>}
+          {!isJudge && !me.submitted && (
+            <p className="-mt-3 rounded-xl bg-hot/20 px-3 py-2 text-center text-sm font-semibold">{t.timeUp}</p>
+          )}
           <Meme key={room.viewing} photo={room.photo!} caption={cap(sub.caption)} className="animate-pop-in" />
           <div className="flex items-center justify-between gap-3">
             {isJudge && (
@@ -162,7 +169,7 @@ export default function OnlineGame({
         <>
           <h2 className="animate-pop-in text-center font-display text-4xl uppercase text-pop">
             {room.winnerId === room.me ? "🎉 " : ""}
-            {isDeckCard(room.winnerId) ? t.deckWins : t.winnerIs(name(room.winnerId))}
+            {t.winnerIs(name(room.winnerId))}
           </h2>
           {win && <Meme photo={room.photo!} caption={cap(win.caption)} className="animate-pop-in" />}
           <ul className="flex flex-col gap-1.5 text-sm">
@@ -249,17 +256,22 @@ function PickHand({
   room,
   cap,
   socket,
+  timer,
 }: {
   t: Strings;
   room: RoomView;
   cap: (i: number) => string;
   socket: Sock;
+  timer: React.ReactNode;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const shown = selected !== null && room.hand.includes(selected) ? selected : null;
   return (
     <>
-      <p className="text-center text-sm font-bold text-white/60">{t.chooseCaption}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-bold text-white/60">{t.chooseCaption}</p>
+        {timer}
+      </div>
       <Meme photo={room.photo!} caption={shown !== null ? cap(shown) : undefined} className="animate-flip-in" />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {room.hand.map((c) => (

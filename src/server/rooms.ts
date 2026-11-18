@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import { drawCaptions, drawPhoto, isDeckCard, newCaptionDeck, shuffle, withDeckCards, type Win } from "../lib/game";
+import { choosePhoto, drawCaptions, drawPhotoChoices, newCaptionDeck, PICK_SECONDS, shuffle, type Win } from "../lib/game";
 import {
   MAX_ONLINE_PLAYERS,
   type ClientToServer,
@@ -34,6 +34,11 @@ interface Room {
   photoPool: string[];
   photoDeck: string[];
   photo: string;
+  /** Face-down photos the judge picks from during "reveal". */
+  photoChoices: string[];
+  /** When the caption timer runs out (ms since epoch), during "pick". */
+  pickEndsAt: number | null;
+  pickTimer: ReturnType<typeof setTimeout> | null;
   submissions: { playerId: string; caption: number }[];
   viewing: number;
   winnerId: string | null;
@@ -44,6 +49,7 @@ type IO = Server<ClientToServer, ServerToClient>;
 type Sock = Socket<ClientToServer, ServerToClient, object, { code?: string; playerId?: string }>;
 
 const rooms = new Map<string, Room>();
+let ioRef: IO | null = null; // set by attachRooms; used by the caption timer
 const ROOM_TTL = 30 * 60 * 1000; // drop rooms 30 min after everyone left
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion
 
@@ -85,6 +91,8 @@ function view(r: Room, me: RPlayer): RoomView {
       submitted: r.submissions.some((s) => s.playerId === p.id),
     })),
     photo: r.phase === "lobby" || r.phase === "reveal" ? null : r.photo,
+    photoChoices: r.phase === "reveal" ? r.photoChoices.length : 0,
+    pickMsLeft: r.phase === "pick" && r.pickEndsAt ? Math.max(0, r.pickEndsAt - Date.now()) : null,
     hand: me.hand,
     swapUsed: me.swapUsed,
     mySubmission: mine?.caption ?? null,
@@ -110,26 +118,49 @@ function dealIn(r: Room, p: RPlayer) {
   if (missing > 0) p.hand.push(...drawCaptions(r, missing));
 }
 
-/** Move to judging once every online non-judge has submitted. */
-function maybeAdvancePick(r: Room) {
-  if (r.phase !== "pick" || pending(r).length > 0) return;
-  if (r.submissions.length === 0) return; // nobody played (everyone left) — wait
-  r.submissions = shuffle(withDeckCards(r, r.submissions));
+function clearPickTimer(r: Room) {
+  if (r.pickTimer) clearTimeout(r.pickTimer);
+  r.pickTimer = null;
+  r.pickEndsAt = null;
+}
+
+function toJudging(r: Room) {
+  clearPickTimer(r);
+  r.submissions = shuffle(r.submissions);
   r.viewing = 0;
   r.phase = "judging";
 }
 
-/** Round cancelled: played cards go back to their owners' hands, deck cards to the discard pile. */
-function returnPlayedCards(r: Room) {
-  for (const s of r.submissions) {
-    const owner = r.players.find((x) => x.id === s.playerId);
-    if (owner) owner.hand.push(s.caption);
-    else r.captionDiscard.push(s.caption);
-  }
+/** Move to judging once every online non-judge has submitted. */
+function maybeAdvancePick(r: Room) {
+  if (r.phase !== "pick" || pending(r).length > 0) return;
+  if (r.submissions.length === 0) return; // nobody played (everyone left) — the timer decides
+  toJudging(r);
+}
+
+/** Captioners get PICK_SECONDS; whoever hasn't played by then sits the round out. */
+function startPick(r: Room) {
+  clearPickTimer(r);
+  r.phase = "pick";
+  r.pickEndsAt = Date.now() + PICK_SECONDS * 1000;
+  r.pickTimer = setTimeout(() => {
+    r.pickTimer = null;
+    if (r.phase !== "pick" || !rooms.has(r.code)) return;
+    if (r.submissions.length > 0) toJudging(r);
+    else {
+      // Nobody played in time: skip to the next judge with a new set of photos.
+      r.round += 1;
+      nextJudge(r);
+      startRound(r);
+    }
+    if (ioRef) broadcast(ioRef, r);
+  }, PICK_SECONDS * 1000);
+  r.pickTimer.unref?.();
 }
 
 function startRound(r: Room) {
-  r.photo = drawPhoto(r);
+  clearPickTimer(r);
+  r.photoChoices = drawPhotoChoices(r);
   r.submissions = [];
   r.viewing = 0;
   r.winnerId = null;
@@ -168,6 +199,7 @@ function removePlayer(r: Room, playerId: string) {
     r.submissions = r.submissions.filter((s) => s.playerId !== playerId);
   }
   if (r.players.length === 0) {
+    clearPickTimer(r);
     rooms.delete(r.code);
     return;
   }
@@ -176,13 +208,13 @@ function removePlayer(r: Room, playerId: string) {
   if (r.hostId === playerId) r.hostId = (r.players.find((x) => x.socketId) ?? r.players[0]).id;
   // A game can't continue with fewer than 3 players: back to the lobby.
   if (r.phase !== "lobby" && r.players.length < 3) {
+    clearPickTimer(r);
     r.phase = "lobby";
     return;
   }
-  const realPlays = r.submissions.filter((s) => !isDeckCard(s.playerId)).length;
-  if (midRound && (wasJudge || (r.phase === "judging" && realPlays === 0))) {
-    // The judge left mid-round (or nobody's card is left): return played cards and restart the round.
-    returnPlayedCards(r);
+  if (midRound && (wasJudge || (r.phase === "judging" && r.submissions.length === 0))) {
+    // The judge left mid-round: return played cards and restart the round with the next judge.
+    for (const s of r.submissions) r.players.find((x) => x.id === s.playerId)?.hand.push(s.caption);
     if (wasJudge) {
       r.judgeIdx = (r.judgeIdx - 1 + r.players.length) % r.players.length;
       nextJudge(r);
@@ -195,9 +227,13 @@ function removePlayer(r: Room, playerId: string) {
 }
 
 export function attachRooms(io: IO) {
+  ioRef = io;
   setInterval(() => {
     for (const r of rooms.values()) {
-      if (r.emptySince && Date.now() - r.emptySince > ROOM_TTL) rooms.delete(r.code);
+      if (r.emptySince && Date.now() - r.emptySince > ROOM_TTL) {
+        clearPickTimer(r);
+        rooms.delete(r.code);
+      }
     }
   }, 60_000).unref();
 
@@ -236,6 +272,9 @@ export function attachRooms(io: IO) {
         photoPool: [],
         photoDeck: [],
         photo: "",
+        photoChoices: [],
+        pickEndsAt: null,
+        pickTimer: null,
         submissions: [],
         viewing: 0,
         winnerId: null,
@@ -320,10 +359,12 @@ export function attachRooms(io: IO) {
       broadcast(io, r);
     });
 
-    socket.on("game:flip", () => {
+    socket.on("game:flip", ({ index } = { index: 0 }) => {
       const c = ctx();
       if (!c || c.r.phase !== "reveal" || judge(c.r) !== c.me) return;
-      c.r.phase = "pick";
+      c.r.photo = choosePhoto(c.r, c.r.photoChoices, Number(index));
+      c.r.photoChoices = [];
+      startPick(c.r);
       broadcast(io, c.r);
     });
 
@@ -359,12 +400,6 @@ export function attachRooms(io: IO) {
       const c = ctx();
       if (!c || c.r.phase !== "judging" || judge(c.r) !== c.me) return;
       const sub = c.r.submissions[index];
-      if (sub && isDeckCard(sub.playerId)) {
-        // A card from the deck won: nobody scores this round.
-        c.r.winnerId = sub.playerId;
-        c.r.phase = "result";
-        return broadcast(io, c.r);
-      }
       const winner = sub && c.r.players.find((p) => p.id === sub.playerId);
       if (!winner) return;
       winner.score += 1;
@@ -388,7 +423,7 @@ export function attachRooms(io: IO) {
       if (!c || c.r.hostId !== c.me.id) return;
       const { r } = c;
       if (r.phase !== "reveal" && r.phase !== "pick" && r.phase !== "judging") return;
-      returnPlayedCards(r);
+      for (const s of r.submissions) r.players.find((x) => x.id === s.playerId)?.hand.push(s.caption);
       nextJudge(r);
       startRound(r);
       broadcast(io, r);

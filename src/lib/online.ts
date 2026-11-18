@@ -22,6 +22,10 @@ export interface RoomView {
   handSize: number;
   players: PublicPlayer[];
   photo: string | null;
+  /** During "reveal": how many face-down photos the judge can pick from. */
+  photoChoices: number;
+  /** During "pick": ms left to play a caption when this view was sent. */
+  pickMsLeft: number | null;
   hand: number[];
   swapUsed: boolean;
   mySubmission: number | null;
@@ -44,7 +48,7 @@ export interface ClientToServer {
   "room:leave": () => void;
   "room:kick": (p: { playerId: string }) => void;
   "game:start": (p: { target: number; handSize: number }, ack: Ack) => void;
-  "game:flip": () => void;
+  "game:flip": (p: { index: number }) => void;
   "game:play": (p: { caption: number }) => void;
   "game:swap": () => void;
   "game:view": (p: { index: number }) => void;

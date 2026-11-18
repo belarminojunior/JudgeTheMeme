@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 type Variant = "pop" | "hot" | "ghost";
 
@@ -121,5 +121,72 @@ export function Scoreboard({
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * Face-down photo cards. The judge taps one to flip it; everyone else just sees the backs.
+ * `onPick` is omitted for players who are only watching.
+ */
+export function PhotoChoices({ count, hint, onPick }: { count: number; hint: string; onPick?: (index: number) => void }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-center text-sm font-semibold text-white/60">{hint}</p>
+      <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-5">
+        {Array.from({ length: count }, (_, i) => (
+          <button
+            key={i}
+            disabled={!onPick}
+            onClick={() => onPick?.(i)}
+            aria-label={`${i + 1}`}
+            className="flex aspect-[3/4] flex-col items-center justify-center rounded-2xl border-4 border-dashed border-pop/50 bg-panel font-display text-4xl text-pop transition enabled:hover:-translate-y-1 enabled:hover:border-pop enabled:active:scale-95 disabled:opacity-70"
+          >
+            ?
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Seconds left until a deadline given as "ms remaining when we were told" (avoids clock skew
+ * between phones and the server). Calls onExpire once when it reaches zero.
+ */
+export function useCountdown(msLeft: number | null, resetKey: unknown, onExpire?: () => void) {
+  const [left, setLeft] = useState<number | null>(msLeft === null ? null : Math.ceil(msLeft / 1000));
+  const expire = useRef(onExpire);
+  useEffect(() => {
+    expire.current = onExpire;
+  });
+  useEffect(() => {
+    if (msLeft === null) return;
+    const deadline = Date.now() + msLeft;
+    let fired = false;
+    const tick = () => {
+      const s = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setLeft(s);
+      if (s === 0 && !fired) {
+        fired = true;
+        expire.current?.();
+      }
+    };
+    const first = setTimeout(tick, 0);
+    const id = setInterval(tick, 250);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [msLeft, resetKey]);
+  return msLeft === null ? null : left;
+}
+
+export function CountdownBadge({ seconds, label }: { seconds: number; label: string }) {
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-sm font-extrabold tabular-nums ${seconds <= 10 ? "animate-pulse bg-hot text-white" : "bg-panel-2 text-pop"}`}
+    >
+      {label}
+    </span>
   );
 }

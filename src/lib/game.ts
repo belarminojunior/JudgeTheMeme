@@ -40,6 +40,8 @@ export interface GameState {
   photoPool: string[];
   photoDeck: string[];
   photo: string;
+  /** Face-down photos the judge chooses from at the start of the round. */
+  photoChoices: string[];
   flipped: boolean;
   queue: string[]; // player ids still to submit this round
   submissions: Submission[]; // shuffled before judging
@@ -88,21 +90,6 @@ export function drawCaptions(s: CaptionDecks, n: number): number[] {
   return out;
 }
 
-/** The judge always gets at least this many captions to choose from. */
-export const MIN_JUDGE_OPTIONS = 5;
-const DECK_PREFIX = "deck-";
-/** Submissions added from the deck (not played by anyone) have ids like "deck-0". */
-export const isDeckCard = (playerId: string | null | undefined) => !!playerId?.startsWith(DECK_PREFIX);
-
-/**
- * When fewer than MIN_JUDGE_OPTIONS captions were played, add random ones from the deck
- * so the judge still has a real choice. If the judge picks one of those, nobody scores.
- */
-export function withDeckCards(s: CaptionDecks, subs: Submission[]): Submission[] {
-  const extra = drawCaptions(s, Math.max(0, MIN_JUDGE_OPTIONS - subs.length));
-  return [...subs, ...extra.map((caption, i) => ({ playerId: `${DECK_PREFIX}${i}`, caption }))];
-}
-
 export function drawPhoto(s: PhotoDecks): string {
   if (s.photoDeck.length === 0) {
     // Reshuffle, avoiding an immediate repeat of the current photo when possible.
@@ -110,6 +97,29 @@ export function drawPhoto(s: PhotoDecks): string {
     s.photoDeck = shuffle(pool);
   }
   return s.photoDeck.pop()!;
+}
+
+/** How many face-down photos the judge chooses from each round. */
+export const PHOTO_CHOICES = 5;
+/** Seconds each player has to play a caption before they sit the round out. */
+export const PICK_SECONDS = 45;
+
+/** Draw the face-down photos for a round (different from each other when the pool allows). */
+export function drawPhotoChoices(s: PhotoDecks): string[] {
+  const want = Math.min(PHOTO_CHOICES, new Set(s.photoPool).size);
+  const out: string[] = [];
+  for (let tries = 0; out.length < want && tries < want * 4; tries++) {
+    const p = drawPhoto(s);
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/** Use the chosen photo; the others go to the bottom of the deck for later rounds. */
+export function choosePhoto(s: PhotoDecks, choices: string[], index: number): string {
+  const i = Number.isInteger(index) && index >= 0 && index < choices.length ? index : 0;
+  s.photoDeck.unshift(...choices.filter((_, k) => k !== i));
+  return choices[i];
 }
 
 function nonJudgeQueue(s: GameState): string[] {
@@ -144,19 +154,45 @@ export function newGame(settings: Settings): GameState {
     photoPool,
     photoDeck: shuffle(photoPool),
     photo: "",
+    photoChoices: [],
     flipped: false,
     queue: [],
     submissions: [],
     winnerId: null,
   };
   for (const p of s.players) p.hand = drawCaptions(s, s.handSize);
-  s.photo = drawPhoto(s);
+  s.photoChoices = drawPhotoChoices(s);
   s.queue = nonJudgeQueue(s);
   return s;
 }
 
-export function flip(state: GameState): GameState {
-  return { ...state, flipped: true };
+/** The judge flips one of the face-down photos; it becomes this round's meme. */
+export function flip(state: GameState, index = 0): GameState {
+  const s = clone(state);
+  // Games saved before photo choices existed already have their photo.
+  if (s.photoChoices?.length) s.photo = choosePhoto(s, s.photoChoices, index);
+  s.photoChoices = [];
+  s.flipped = true;
+  return s;
+}
+
+/** Captioners still in the queue are done (played or out of time): go to the judge, or skip the round. */
+function finishQueueIfDone(s: GameState): GameState {
+  if (s.queue.length > 0) {
+    s.phase = "handoff";
+    return s;
+  }
+  if (s.submissions.length === 0) return nextRound(s); // nobody played in time
+  s.submissions = shuffle(s.submissions);
+  s.phase = "judgeHandoff";
+  return s;
+}
+
+/** A player ran out of time: they sit this round out and keep their hand. */
+export function skipPlayer(state: GameState, playerId: string): GameState {
+  const s = clone(state);
+  s.queue = s.queue.filter((id) => id !== playerId);
+  return finishQueueIfDone(s);
 }
 
 export function startCaptioning(state: GameState): GameState {
@@ -183,13 +219,7 @@ export function playCard(state: GameState, playerId: string, caption: number): G
   p.hand = p.hand.filter((c) => c !== caption);
   s.submissions.push({ playerId, caption });
   s.queue = s.queue.filter((id) => id !== playerId);
-  if (s.queue.length === 0) {
-    s.submissions = shuffle(withDeckCards(s, s.submissions));
-    s.phase = "judgeHandoff";
-  } else {
-    s.phase = "handoff";
-  }
-  return s;
+  return finishQueueIfDone(s);
 }
 
 export function showCaptionsToJudge(state: GameState): GameState {
@@ -198,16 +228,11 @@ export function showCaptionsToJudge(state: GameState): GameState {
 
 export function pickWinner(state: GameState, playerId: string): GameState {
   const s = clone(state);
-  s.winnerId = playerId;
-  if (isDeckCard(playerId)) {
-    // A card from the deck won: nobody scores this round.
-    s.phase = "result";
-    return s;
-  }
   const winner = s.players.find((x) => x.id === playerId)!;
   const sub = s.submissions.find((x) => x.playerId === playerId)!;
   winner.score += 1;
   winner.wins.push({ photo: s.photo, caption: sub.caption });
+  s.winnerId = playerId;
   s.phase = winner.score >= s.target ? "gameover" : "result";
   return s;
 }
@@ -221,7 +246,7 @@ export function nextRound(state: GameState): GameState {
   }
   s.round += 1;
   s.judgeIdx = (s.judgeIdx + 1) % s.players.length;
-  s.photo = drawPhoto(s);
+  s.photoChoices = drawPhotoChoices(s);
   s.flipped = false;
   s.submissions = [];
   s.winnerId = null;
