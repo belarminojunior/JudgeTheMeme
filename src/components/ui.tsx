@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { CARD_SWAP_MAX } from "@/lib/game";
+import type { Strings } from "@/lib/i18n";
+import { saveMemeImage } from "@/lib/memeImage";
 
 type Variant = "pop" | "hot" | "ghost";
 
@@ -55,31 +58,250 @@ export function Meme({
 export function CaptionCard({
   text,
   selected,
+  discard,
   onClick,
 }: {
   text: string;
   selected?: boolean;
+  /** Marked to be thrown away (card swap mode). */
+  discard?: boolean;
   onClick?: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      aria-pressed={selected}
+      aria-pressed={selected || discard}
       className={`relative flex min-h-24 w-full items-center rounded-2xl border-2 p-4 pr-9 text-left text-base font-bold leading-snug transition active:scale-[0.98] ${
-        selected
-          ? "-translate-y-1 border-pop bg-pop text-ink shadow-[0_6px_0_#b8901a]"
-          : "border-white/10 bg-white text-ink shadow-[0_4px_0_#cfc6e3] hover:-translate-y-0.5"
+        discard
+          ? "border-hot bg-white text-ink/40 line-through shadow-[0_4px_0_#b52a4c]"
+          : selected
+            ? "-translate-y-1 border-pop bg-pop text-ink shadow-[0_6px_0_#b8901a]"
+            : "border-white/10 bg-white text-ink shadow-[0_4px_0_#cfc6e3] hover:-translate-y-0.5"
       }`}
     >
       {text}
       <span
         className={`absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs ${
-          selected ? "bg-ink text-pop" : "border-2 border-ink/15"
+          discard ? "bg-hot text-white" : selected ? "bg-ink text-pop" : "border-2 border-ink/15"
         }`}
       >
-        {selected ? "✓" : ""}
+        {discard ? "✕" : selected ? "✓" : ""}
       </span>
     </button>
+  );
+}
+
+/**
+ * A captioner's hand: pick a card to play, swap up to CARD_SWAP_MAX single cards (once per round),
+ * or swap the whole hand (swapsLeft: one per game, plus one per round won).
+ */
+export function HandPicker({
+  t,
+  photo,
+  hand,
+  caption,
+  swapsLeft,
+  canSwapCards,
+  onPlay,
+  onSwapHand,
+  onSwapCards,
+}: {
+  t: Strings;
+  photo: string;
+  hand: number[];
+  caption: (i: number) => string;
+  swapsLeft: number;
+  canSwapCards: boolean;
+  onPlay: (c: number) => void;
+  onSwapHand: () => void;
+  onSwapCards: (cards: number[]) => void;
+}) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const [swapping, setSwapping] = useState(false);
+  const [discard, setDiscard] = useState<number[]>([]);
+  const shown = selected !== null && hand.includes(selected) ? selected : null;
+  const marked = discard.filter((c) => hand.includes(c));
+
+  function tap(c: number) {
+    if (!swapping) return setSelected(c);
+    setDiscard((d) => (d.includes(c) ? d.filter((x) => x !== c) : d.length < CARD_SWAP_MAX ? [...d, c] : d));
+  }
+  function stopSwapping() {
+    setSwapping(false);
+    setDiscard([]);
+  }
+
+  const link =
+    "text-sm font-semibold text-white/60 underline-offset-4 hover:underline disabled:no-underline disabled:opacity-40";
+  return (
+    <>
+      <Meme photo={photo} caption={shown !== null && !swapping ? caption(shown) : undefined} className="animate-flip-in" />
+      {swapping && <p className="-mb-2 text-center text-sm font-bold text-hot">{t.swapCardsHint(CARD_SWAP_MAX)}</p>}
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {hand.map((c) => (
+          <CaptionCard
+            key={c}
+            text={caption(c)}
+            selected={!swapping && shown === c}
+            discard={swapping && marked.includes(c)}
+            onClick={() => tap(c)}
+          />
+        ))}
+      </div>
+      <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 bg-background/95 px-4 pb-4 pt-3 backdrop-blur">
+        {swapping ? (
+          <>
+            <Button
+              variant="hot"
+              disabled={marked.length === 0}
+              onClick={() => {
+                onSwapCards(marked);
+                stopSwapping();
+              }}
+            >
+              ↻ {t.swapCardsConfirm(marked.length || 1)}
+            </Button>
+            <button onClick={stopSwapping} className={link}>
+              {t.cancel}
+            </button>
+          </>
+        ) : (
+          <>
+            <Button disabled={shown === null} onClick={() => shown !== null && onPlay(shown)}>
+              {t.playCard}
+            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+              <button disabled={!canSwapCards} onClick={() => setSwapping(true)} className={link}>
+                {canSwapCards ? t.swapCards(CARD_SWAP_MAX) : t.swapCardsUsed}
+              </button>
+              <button disabled={swapsLeft <= 0} onClick={onSwapHand} className={link}>
+                {swapsLeft > 0 ? `↻ ${t.swapHand} (${t.swapsLeft(swapsLeft)})` : t.noSwapsLeft}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** The judge flips through the captions one at a time, on the judge's own screen only. */
+export function JudgeCarousel({
+  t,
+  photo,
+  captions,
+  caption,
+  onPick,
+  onNone,
+}: {
+  t: Strings;
+  photo: string;
+  captions: number[];
+  caption: (i: number) => string;
+  onPick: (caption: number) => void;
+  onNone: () => void;
+}) {
+  const [idx, setIdx] = useState(0);
+  const n = captions.length;
+  const i = Math.min(idx, n - 1);
+  return (
+    <>
+      <Meme key={captions[i]} photo={photo} caption={caption(captions[i])} className="animate-pop-in" />
+      <div className="flex items-center justify-between gap-3">
+        <Button variant="ghost" aria-label="previous" onClick={() => setIdx((i - 1 + n) % n)}>
+          ←
+        </Button>
+        <div className="flex gap-1.5">
+          {captions.map((c, k) => (
+            <button
+              key={c}
+              aria-label={`${k + 1}`}
+              onClick={() => setIdx(k)}
+              className={`h-3 w-3 rounded-full ${k === i ? "bg-pop" : "bg-white/25"}`}
+            />
+          ))}
+        </div>
+        <Button variant="ghost" aria-label="next" onClick={() => setIdx((i + 1) % n)}>
+          →
+        </Button>
+      </div>
+      <p className="-mt-2 text-center text-sm font-bold text-white/50">
+        {i + 1} / {n}
+      </p>
+      <Button variant="hot" onClick={() => onPick(captions[i])}>
+        🏆 {t.pickWinner}
+      </Button>
+      <NoneGoodButton label={t.noneGood} confirmText={t.noneConfirm} onNone={onNone} />
+    </>
+  );
+}
+
+/** What the captioners see while the judge decides: the photo and every caption in play. */
+export function CaptionsInPlay({
+  t,
+  photo,
+  captions,
+  mine,
+  caption,
+}: {
+  t: Strings;
+  photo: string;
+  captions: number[];
+  mine: number | null;
+  caption: (i: number) => string;
+}) {
+  return (
+    <>
+      <Meme photo={photo} />
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-white/50">{t.allCaptions}</h3>
+        {captions.map((c) => (
+          <div
+            key={c}
+            className={`animate-pop-in relative rounded-2xl border-2 bg-white p-4 text-base font-bold leading-snug text-ink ${
+              c === mine ? "border-pop pr-16" : "border-transparent"
+            }`}
+          >
+            {caption(c)}
+            {c === mine && (
+              <span className="absolute right-3 top-3 rounded-full bg-pop px-2 py-0.5 text-xs font-extrabold uppercase">
+                {t.yours}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** A winning meme at game over, with a button to save it as a watermarked image. */
+export function WinningMeme({ t, photo, caption, by }: { t: Strings; photo: string; caption: string; by: string }) {
+  const [busy, setBusy] = useState(false);
+  async function download() {
+    setBusy(true);
+    try {
+      await saveMemeImage(photo, caption);
+    } catch {
+      alert(t.downloadFailed);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Meme photo={photo} caption={caption} />
+      <div className="flex items-center justify-between gap-2 px-1">
+        <p className="truncate text-sm font-bold text-white/60">— {by}</p>
+        <button
+          onClick={download}
+          disabled={busy}
+          className="shrink-0 rounded-full bg-panel-2 px-3 py-1.5 text-sm font-bold text-pop transition hover:bg-pop hover:text-ink disabled:opacity-50"
+        >
+          {busy ? "…" : t.download}
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -19,7 +19,10 @@ export interface Player {
   name: string;
   hand: number[];
   score: number;
-  swapUsed: boolean;
+  /** Whole-hand swaps left: one per game, plus one for every round won. */
+  swapsLeft: number;
+  /** Round in which this player last swapped single cards (once per round). */
+  cardSwapRound: number;
   wins: Win[];
 }
 
@@ -101,6 +104,20 @@ export function drawPhoto(s: PhotoDecks): string {
 
 /** How many face-down photos the judge chooses from each round. */
 export const PHOTO_CHOICES = 5;
+/** How many single cards a player may swap each round. */
+export const CARD_SWAP_MAX = 2;
+
+/** Discard the chosen cards (at most CARD_SWAP_MAX, all from the hand) and draw as many new ones. */
+export function replaceCards(s: CaptionDecks, hand: number[], cards: number[]): number[] | null {
+  const pick = [...new Set(cards)].filter((c) => hand.includes(c));
+  if (pick.length === 0 || pick.length > CARD_SWAP_MAX || pick.length !== cards.length) return null;
+  s.captionDiscard.push(...pick);
+  const fresh = drawCaptions(s, pick.length);
+  // Keep the new cards where the old ones were, so the hand doesn't jump around.
+  let k = 0;
+  return hand.flatMap((c) => (pick.includes(c) ? (k < fresh.length ? [fresh[k++]] : []) : [c]));
+}
+
 /** Seconds each player has to play a caption before they sit the round out. */
 export const PICK_SECONDS = 60;
 
@@ -143,7 +160,8 @@ export function newGame(settings: Settings): GameState {
       name,
       hand: [],
       score: 0,
-      swapUsed: false,
+      swapsLeft: 1,
+      cardSwapRound: 0,
       wins: [],
     })),
     judgeIdx: Math.floor(Math.random() * settings.names.length),
@@ -206,10 +224,22 @@ export function showHand(state: GameState): GameState {
 export function swapHand(state: GameState, playerId: string): GameState {
   const s = clone(state);
   const p = s.players.find((x) => x.id === playerId)!;
-  if (p.swapUsed) return state;
+  if (p.swapsLeft <= 0) return state;
   s.captionDiscard.push(...p.hand);
   p.hand = drawCaptions(s, s.handSize);
-  p.swapUsed = true;
+  p.swapsLeft -= 1;
+  return s;
+}
+
+/** Swap up to CARD_SWAP_MAX chosen cards, once per round. */
+export function swapCards(state: GameState, playerId: string, cards: number[]): GameState {
+  const s = clone(state);
+  const p = s.players.find((x) => x.id === playerId)!;
+  if (p.cardSwapRound === s.round) return state;
+  const hand = replaceCards(s, p.hand, cards);
+  if (!hand) return state;
+  p.hand = hand;
+  p.cardSwapRound = s.round;
   return s;
 }
 
@@ -231,6 +261,7 @@ export function pickWinner(state: GameState, playerId: string): GameState {
   const winner = s.players.find((x) => x.id === playerId)!;
   const sub = s.submissions.find((x) => x.playerId === playerId)!;
   winner.score += 1;
+  winner.swapsLeft += 1; // every win earns another whole-hand swap
   winner.wins.push({ photo: s.photo, caption: sub.caption });
   s.winnerId = playerId;
   s.phase = winner.score >= s.target ? "gameover" : "result";

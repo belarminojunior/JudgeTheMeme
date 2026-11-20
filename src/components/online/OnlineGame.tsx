@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import type { Socket } from "socket.io-client";
 import { CAPTIONS } from "@/lib/captions";
 import type { Lang, Strings } from "@/lib/i18n";
@@ -8,16 +7,18 @@ import type { ClientToServer, RoomView, ServerToClient } from "@/lib/online";
 import { PICK_SECONDS } from "@/lib/game";
 import {
   Button,
-  CaptionCard,
+  CaptionsInPlay,
   CountdownBadge,
+  HandPicker,
+  JudgeCarousel,
   Meme,
-  NoneGoodButton,
   NoWinner,
   PhotoChoices,
   Scoreboard,
   Screen,
   TimerBar,
   useCountdown,
+  WinningMeme,
 } from "../ui";
 
 type Sock = Socket<ServerToClient, ClientToServer>;
@@ -141,51 +142,27 @@ export default function OnlineGame({
       break;
 
     case "judging": {
-      const n = room.submissions.length;
-      const sub = room.submissions[room.viewing] ?? room.submissions[0];
-      body = (
+      const captions = room.submissions.map((s) => s.caption);
+      body = isJudge ? (
         <>
-          <p className="text-center font-bold text-white/70">
-            {isJudge ? t.judging : t.judgeIsChoosing(name(room.judgeId))}
-          </p>
-          {!isJudge && !me.submitted && (
+          <p className="text-center font-bold text-white/70">{t.judging}</p>
+          <JudgeCarousel
+            key={room.round}
+            t={t}
+            photo={room.photo!}
+            captions={captions}
+            caption={cap}
+            onPick={(caption) => socket.emit("game:pick", { caption })}
+            onNone={() => socket.emit("game:noWinner")}
+          />
+        </>
+      ) : (
+        <>
+          <p className="text-center font-bold text-white/70">{t.judgeIsChoosing(name(room.judgeId))}</p>
+          {!me.submitted && (
             <p className="-mt-3 rounded-xl bg-hot/20 px-3 py-2 text-center text-sm font-semibold">{t.timeUp}</p>
           )}
-          <Meme key={room.viewing} photo={room.photo!} caption={cap(sub.caption)} className="animate-pop-in" />
-          <div className="flex items-center justify-between gap-3">
-            {isJudge && (
-              <Button variant="ghost" aria-label="previous" onClick={() => socket.emit("game:view", { index: room.viewing - 1 })}>
-                ←
-              </Button>
-            )}
-            <div className="flex flex-1 justify-center gap-1.5">
-              {room.submissions.map((_, i) => (
-                <button
-                  key={i}
-                  aria-label={`${i + 1}`}
-                  disabled={!isJudge}
-                  onClick={() => socket.emit("game:view", { index: i })}
-                  className={`h-3 w-3 rounded-full ${i === room.viewing ? "bg-pop" : "bg-white/25"}`}
-                />
-              ))}
-            </div>
-            {isJudge && (
-              <Button variant="ghost" aria-label="next" onClick={() => socket.emit("game:view", { index: (room.viewing + 1) % n })}>
-                →
-              </Button>
-            )}
-          </div>
-          <p className="-mt-2 text-center text-sm font-bold text-white/50">
-            {room.viewing + 1} / {n}
-          </p>
-          {isJudge && (
-            <>
-              <Button variant="hot" onClick={() => socket.emit("game:pick", { index: room.viewing })}>
-                🏆 {t.pickWinner}
-              </Button>
-              <NoneGoodButton label={t.noneGood} confirmText={t.noneConfirm} onNone={() => socket.emit("game:noWinner")} />
-            </>
-          )}
+          <CaptionsInPlay t={t} photo={room.photo!} captions={captions} mine={room.mySubmission} caption={cap} />
         </>
       );
       break;
@@ -239,10 +216,7 @@ export default function OnlineGame({
           <h3 className="font-display text-2xl uppercase">{t.winningMemes}</h3>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {room.wins.map((w, i) => (
-              <div key={i}>
-                <Meme photo={w.photo} caption={cap(w.caption)} />
-                <p className="mt-1 text-center text-sm font-bold text-white/60">— {name(w.playerId)}</p>
-              </div>
+              <WinningMeme key={i} t={t} photo={w.photo} caption={cap(w.caption)} by={name(w.playerId)} />
             ))}
           </div>
           {isHost ? (
@@ -302,8 +276,6 @@ function PickHand({
   timer: React.ReactNode;
   timerBar: React.ReactNode;
 }) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const shown = selected !== null && room.hand.includes(selected) ? selected : null;
   return (
     <>
       <div className="flex items-center justify-between gap-2">
@@ -311,24 +283,17 @@ function PickHand({
         {timer}
       </div>
       {timerBar}
-      <Meme photo={room.photo!} caption={shown !== null ? cap(shown) : undefined} className="animate-flip-in" />
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        {room.hand.map((c) => (
-          <CaptionCard key={c} text={cap(c)} selected={shown === c} onClick={() => setSelected(c)} />
-        ))}
-      </div>
-      <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 bg-background/95 px-4 pb-4 pt-3 backdrop-blur">
-        <Button disabled={shown === null} onClick={() => shown !== null && socket.emit("game:play", { caption: shown })}>
-          {t.playCard}
-        </Button>
-        <button
-          disabled={room.swapUsed}
-          onClick={() => socket.emit("game:swap")}
-          className="text-sm font-semibold text-white/60 underline-offset-4 hover:underline disabled:no-underline disabled:opacity-40"
-        >
-          {room.swapUsed ? t.swapUsed : `↻ ${t.swapHand} (${t.swapHint})`}
-        </button>
-      </div>
+      <HandPicker
+        t={t}
+        photo={room.photo!}
+        hand={room.hand}
+        caption={cap}
+        swapsLeft={room.swapsLeft}
+        canSwapCards={room.canSwapCards}
+        onPlay={(caption) => socket.emit("game:play", { caption })}
+        onSwapHand={() => socket.emit("game:swap")}
+        onSwapCards={(cards) => socket.emit("game:swapCards", { cards })}
+      />
     </>
   );
 }

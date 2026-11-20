@@ -10,17 +10,18 @@ import OnlineEntry from "./online/OnlineEntry";
 import { loadSession } from "./online/useOnline";
 import {
   Button,
-  CaptionCard,
   CountdownBadge,
+  HandPicker,
+  JudgeCarousel,
   Logo,
   Meme,
-  NoneGoodButton,
   NoWinner,
   PhotoChoices,
   Scoreboard as SharedScoreboard,
   Screen,
   TimerBar,
   useCountdown,
+  WinningMeme,
 } from "./ui";
 
 const STATE_KEY = "jtm-state-v1";
@@ -56,7 +57,16 @@ function loadGame(): G.GameState | null {
     photoPool: g.photoPool.map(fix),
     photoDeck: g.photoDeck.map(fix),
     photoChoices: (g.photoChoices ?? []).map(fix),
-    players: g.players.map((p) => ({ ...p, wins: p.wins.map((w) => ({ ...w, photo: fix(w.photo) })) })),
+    players: g.players.map((p) => {
+      // Games saved before flexible swaps had a single `swapUsed` flag.
+      const old = p as G.Player & { swapUsed?: boolean };
+      return {
+        ...p,
+        swapsLeft: p.swapsLeft ?? (old.swapUsed ? 0 : 1),
+        cardSwapRound: p.cardSwapRound ?? 0,
+        wins: p.wins.map((w) => ({ ...w, photo: fix(w.photo) })),
+      };
+    }),
   };
 }
 
@@ -306,6 +316,7 @@ function Play({
           player={current!}
           caption={caption}
           onSwap={() => setGame(G.swapHand(game, current!.id))}
+          onSwapCards={(cards) => setGame(G.swapCards(game, current!.id, cards))}
           onPlay={(c) => setGame(G.playCard(game, current!.id, c))}
           onTimeout={() => setGame(G.skipPlayer(game, current!.id))}
         />
@@ -405,6 +416,7 @@ function Pick({
   player,
   caption,
   onSwap,
+  onSwapCards,
   onPlay,
   onTimeout,
 }: {
@@ -413,11 +425,10 @@ function Pick({
   player: G.Player;
   caption: (i: number) => string;
   onSwap: () => void;
+  onSwapCards: (cards: number[]) => void;
   onPlay: (c: number) => void;
   onTimeout: () => void;
 }) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const shown = selected !== null && player.hand.includes(selected) ? selected : null;
   const left = useCountdown(G.PICK_SECONDS * 1000, player.id, onTimeout);
 
   return (
@@ -428,24 +439,17 @@ function Pick({
       </div>
       {left !== null && <TimerBar seconds={left} total={G.PICK_SECONDS} />}
       <p className="-mt-3 text-sm font-bold text-white/60">{t.chooseCaption}</p>
-      <Meme photo={game.photo} caption={shown !== null ? caption(shown) : undefined} />
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        {player.hand.map((c) => (
-          <CaptionCard key={c} text={caption(c)} selected={shown === c} onClick={() => setSelected(c)} />
-        ))}
-      </div>
-      <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 bg-background/95 px-4 pb-4 pt-3 backdrop-blur">
-        <Button disabled={shown === null} onClick={() => shown !== null && onPlay(shown)}>
-          {t.playCard}
-        </Button>
-        <button
-          disabled={player.swapUsed}
-          onClick={onSwap}
-          className="text-sm font-semibold text-white/60 underline-offset-4 hover:underline disabled:no-underline disabled:opacity-40"
-        >
-          {player.swapUsed ? t.swapUsed : `↻ ${t.swapHand} (${t.swapHint})`}
-        </button>
-      </div>
+      <HandPicker
+        t={t}
+        photo={game.photo}
+        hand={player.hand}
+        caption={caption}
+        swapsLeft={player.swapsLeft}
+        canSwapCards={player.cardSwapRound !== game.round}
+        onPlay={onPlay}
+        onSwapHand={onSwap}
+        onSwapCards={onSwapCards}
+      />
     </Screen>
   );
 }
@@ -463,37 +467,17 @@ function Judging({
   onPick: (playerId: string) => void;
   onNone: () => void;
 }) {
-  const [idx, setIdx] = useState(0);
-  const sub = game.submissions[idx];
   return (
     <Screen>
       <p className="text-center font-bold text-white/70">{t.judging}</p>
-      <Meme key={idx} photo={game.photo} caption={caption(sub.caption)} className="animate-pop-in" />
-      <div className="flex items-center justify-between gap-3">
-        <Button variant="ghost" aria-label="previous" onClick={() => setIdx((i) => (i - 1 + game.submissions.length) % game.submissions.length)}>
-          ←
-        </Button>
-        <div className="flex gap-1.5">
-          {game.submissions.map((_, i) => (
-            <button
-              key={i}
-              aria-label={`${i + 1}`}
-              onClick={() => setIdx(i)}
-              className={`h-3 w-3 rounded-full ${i === idx ? "bg-pop" : "bg-white/25"}`}
-            />
-          ))}
-        </div>
-        <Button variant="ghost" aria-label="next" onClick={() => setIdx((i) => (i + 1) % game.submissions.length)}>
-          →
-        </Button>
-      </div>
-      <p className="-mt-2 text-center text-sm font-bold text-white/50">
-        {idx + 1} / {game.submissions.length}
-      </p>
-      <Button variant="hot" onClick={() => onPick(sub.playerId)}>
-        🏆 {t.pickWinner}
-      </Button>
-      <NoneGoodButton label={t.noneGood} confirmText={t.noneConfirm} onNone={onNone} />
+      <JudgeCarousel
+        t={t}
+        photo={game.photo}
+        captions={game.submissions.map((s) => s.caption)}
+        caption={caption}
+        onPick={(c) => onPick(game.submissions.find((s) => s.caption === c)!.playerId)}
+        onNone={onNone}
+      />
     </Screen>
   );
 }
@@ -536,10 +520,7 @@ function GameOver({
       <h3 className="font-display text-2xl uppercase">{t.winningMemes}</h3>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {allWins.map((w, i) => (
-          <div key={i}>
-            <Meme photo={w.photo} caption={caption(w.caption)} />
-            <p className="mt-1 text-center text-sm font-bold text-white/60">— {w.name}</p>
-          </div>
+          <WinningMeme key={i} t={t} photo={w.photo} caption={caption(w.caption)} by={w.name} />
         ))}
       </div>
       <div className="flex flex-col gap-3">

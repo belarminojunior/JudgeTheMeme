@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import { choosePhoto, drawCaptions, drawPhotoChoices, newCaptionDeck, PICK_SECONDS, shuffle, type Win } from "../lib/game";
+import { choosePhoto, drawCaptions, replaceCards, drawPhotoChoices, newCaptionDeck, PICK_SECONDS, shuffle, type Win } from "../lib/game";
 import {
   MAX_ONLINE_PLAYERS,
   type ClientToServer,
@@ -16,7 +16,8 @@ interface RPlayer {
   socketId: string | null;
   hand: number[];
   score: number;
-  swapUsed: boolean;
+  swapsLeft: number;
+  cardSwapRound: number;
   wins: Win[];
 }
 
@@ -40,7 +41,6 @@ interface Room {
   pickEndsAt: number | null;
   pickTimer: ReturnType<typeof setTimeout> | null;
   submissions: { playerId: string; caption: number }[];
-  viewing: number;
   winnerId: string | null;
   emptySince: number | null;
 }
@@ -95,13 +95,13 @@ function view(r: Room, me: RPlayer): RoomView {
     photoChoices: r.phase === "reveal" ? r.photoChoices.map((p) => (me === judge(r) ? p : "")) : [],
     pickMsLeft: r.phase === "pick" && r.pickEndsAt ? Math.max(0, r.pickEndsAt - Date.now()) : null,
     hand: me.hand,
-    swapUsed: me.swapUsed,
+    swapsLeft: me.swapsLeft,
+    canSwapCards: me.cardSwapRound !== r.round,
     mySubmission: mine?.caption ?? null,
     submissions:
       r.phase === "judging" || revealed
         ? r.submissions.map((s) => (revealed ? s : { caption: s.caption }))
         : [],
-    viewing: r.viewing,
     winnerId: r.winnerId,
     wins:
       r.phase === "gameover"
@@ -128,7 +128,6 @@ function clearPickTimer(r: Room) {
 function toJudging(r: Room) {
   clearPickTimer(r);
   r.submissions = shuffle(r.submissions);
-  r.viewing = 0;
   r.phase = "judging";
 }
 
@@ -163,7 +162,6 @@ function startRound(r: Room) {
   clearPickTimer(r);
   r.photoChoices = drawPhotoChoices(r);
   r.submissions = [];
-  r.viewing = 0;
   r.winnerId = null;
   r.phase = "reveal";
 }
@@ -223,7 +221,6 @@ function removePlayer(r: Room, playerId: string) {
     startRound(r);
     return;
   }
-  if (r.phase === "judging") r.viewing = Math.min(r.viewing, r.submissions.length - 1);
   maybeAdvancePick(r);
 }
 
@@ -258,7 +255,7 @@ export function attachRooms(io: IO) {
     socket.on("room:create", ({ name }, ack) => {
       const n = cleanName(name);
       if (!n) return ack({ ok: false, error: "badName" });
-      const p: RPlayer = { id: randomUUID(), name: n, socketId: null, hand: [], score: 0, swapUsed: false, wins: [] };
+      const p: RPlayer = { id: randomUUID(), name: n, socketId: null, hand: [], score: 0, swapsLeft: 1, cardSwapRound: 0, wins: [] };
       const r: Room = {
         code: newCode(),
         hostId: p.id,
@@ -277,7 +274,6 @@ export function attachRooms(io: IO) {
         pickEndsAt: null,
         pickTimer: null,
         submissions: [],
-        viewing: 0,
         winnerId: null,
         emptySince: null,
       };
@@ -310,7 +306,7 @@ export function attachRooms(io: IO) {
         return broadcast(io, r);
       }
       if (r.players.length >= MAX_ONLINE_PLAYERS) return ack({ ok: false, error: "roomFull" });
-      const p: RPlayer = { id: randomUUID(), name: n, socketId: null, hand: [], score: 0, swapUsed: false, wins: [] };
+      const p: RPlayer = { id: randomUUID(), name: n, socketId: null, hand: [], score: 0, swapsLeft: 1, cardSwapRound: 0, wins: [] };
       r.players.push(p);
       if (r.phase !== "lobby") dealIn(r, p); // late joiners get a hand and play from now on
       bind(r, p);
@@ -351,7 +347,7 @@ export function attachRooms(io: IO) {
       r.photoDeck = shuffle(r.photoPool);
       r.captionDeck = newCaptionDeck();
       r.captionDiscard = [];
-      for (const p of r.players) Object.assign(p, { hand: [], score: 0, swapUsed: false, wins: [] });
+      for (const p of r.players) Object.assign(p, { hand: [], score: 0, swapsLeft: 1, cardSwapRound: 0, wins: [] });
       for (const p of r.players) dealIn(r, p);
       r.round = 1;
       r.judgeIdx = Math.floor(Math.random() * r.players.length);
@@ -381,29 +377,33 @@ export function attachRooms(io: IO) {
 
     socket.on("game:swap", () => {
       const c = ctx();
-      if (!c || c.me.swapUsed || c.r.phase === "lobby" || c.r.phase === "gameover") return;
+      if (!c || c.me.swapsLeft <= 0 || c.r.phase === "lobby" || c.r.phase === "gameover") return;
       if (c.r.submissions.some((s) => s.playerId === c.me.id)) return;
       c.r.captionDiscard.push(...c.me.hand);
       c.me.hand = drawCaptions(c.r, c.r.handSize);
-      c.me.swapUsed = true;
+      c.me.swapsLeft -= 1;
       broadcast(io, c.r);
     });
 
-    socket.on("game:view", ({ index }) => {
+    socket.on("game:swapCards", ({ cards } = { cards: [] }) => {
       const c = ctx();
-      if (!c || c.r.phase !== "judging" || judge(c.r) !== c.me) return;
-      const n = c.r.submissions.length;
-      c.r.viewing = ((Math.round(Number(index)) % n) + n) % n;
+      if (!c || c.me.cardSwapRound === c.r.round || c.r.phase === "lobby" || c.r.phase === "gameover") return;
+      if (!Array.isArray(cards) || c.r.submissions.some((s) => s.playerId === c.me.id)) return;
+      const hand = replaceCards(c.r, c.me.hand, cards.map(Number));
+      if (!hand) return;
+      c.me.hand = hand;
+      c.me.cardSwapRound = c.r.round;
       broadcast(io, c.r);
     });
 
-    socket.on("game:pick", ({ index }) => {
+    socket.on("game:pick", ({ caption } = { caption: -1 }) => {
       const c = ctx();
       if (!c || c.r.phase !== "judging" || judge(c.r) !== c.me) return;
-      const sub = c.r.submissions[index];
+      const sub = c.r.submissions.find((s) => s.caption === Number(caption));
       const winner = sub && c.r.players.find((p) => p.id === sub.playerId);
       if (!winner) return;
       winner.score += 1;
+      winner.swapsLeft += 1; // every win earns another whole-hand swap
       winner.wins.push({ photo: c.r.photo, caption: sub.caption });
       c.r.winnerId = winner.id;
       c.r.phase = winner.score >= c.r.target ? "gameover" : "result";

@@ -27,12 +27,13 @@ export interface RoomView {
   /** During "pick": ms left to play a caption when this view was sent. */
   pickMsLeft: number | null;
   hand: number[];
-  swapUsed: boolean;
+  /** Whole-hand swaps left (one per game, plus one per round won). */
+  swapsLeft: number;
+  /** Whether this player can still swap single cards this round. */
+  canSwapCards: boolean;
   mySubmission: number | null;
   /** Captions in judging order; playerId only present after the winner is picked. */
   submissions: { caption: number; playerId?: string }[];
-  /** Which submission the judge is currently showing (mirrored on everyone's screen). */
-  viewing: number;
   winnerId: string | null;
   /** Filled at game over: every winning meme. */
   wins: { playerId: string; photo: string; caption: number }[];
@@ -51,8 +52,9 @@ export interface ClientToServer {
   "game:flip": (p: { index: number }) => void;
   "game:play": (p: { caption: number }) => void;
   "game:swap": () => void;
-  "game:view": (p: { index: number }) => void;
-  "game:pick": (p: { index: number }) => void;
+  "game:swapCards": (p: { cards: number[] }) => void;
+  /** The judge picks the winning caption (by caption id, so it can't shift if someone leaves). */
+  "game:pick": (p: { caption: number }) => void;
   "game:noWinner": () => void;
   "game:next": () => void;
   "game:skipJudge": () => void;
